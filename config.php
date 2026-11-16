@@ -54,6 +54,7 @@ function settings_all(): array
     try {
         $rows = connect()->query('SELECT `key`, `value`, `type` FROM settings')->fetchAll();
     } catch (Throwable $e) {
+        error_log('[config] ' . $e->getMessage());
         return $cache;
     }
     foreach ($rows as $row) {
@@ -100,6 +101,7 @@ function enum_all(): array
             ORDER BY group_code, sort_order, code
         ')->fetchAll();
     } catch (Throwable $e) {
+        error_log('[config] ' . $e->getMessage());
         return $cache;
     }
     foreach ($rows as $row) {
@@ -163,6 +165,7 @@ function grade_all(): array
             ORDER BY sort_order, code
         ')->fetchAll();
     } catch (Throwable $e) {
+        error_log('[config] ' . $e->getMessage());
         return $cache;
     }
     foreach ($rows as $row) {
@@ -210,6 +213,7 @@ function base_stat_labels(): array
             WHERE is_base = 1 AND base_field IS NOT NULL
         ')->fetchAll();
     } catch (Throwable $e) {
+        error_log('[config] ' . $e->getMessage());
         return $cache;
     }
     foreach ($rows as $row) {
@@ -237,6 +241,7 @@ function slot_all(): array
             ORDER BY sort_order, slot_number
         ')->fetchAll();
     } catch (Throwable $e) {
+        error_log('[config] ' . $e->getMessage());
         return $cache;
     }
     foreach ($rows as $row) {
@@ -290,10 +295,48 @@ function slot_payload(): array
             ORDER BY sort_order, column_no
         ')->fetchAll();
     } catch (Throwable $e) {
+        error_log('[config] ' . $e->getMessage());
         $columns = [];
     }
     return [
         'columns' => $columns,
         'slots'   => array_values(slot_all()),
     ];
+}
+
+/* ---------- Файловый кэш JSON-ответов API ---------- */
+
+function api_cache_dir(): string
+{
+    return __DIR__ . '/cache/api';
+}
+
+function api_cache_get(string $key): ?string
+{
+    $file = api_cache_dir() . '/' . $key . '.json';
+    if (!is_file($file) || time() - (int)filemtime($file) > 300) {
+        return null;
+    }
+    $json = @file_get_contents($file);
+    return ($json === false || $json === '') ? null : $json;
+}
+
+function api_cache_set(string $key, string $json): void
+{
+    $dir = api_cache_dir();
+    if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
+        return;
+    }
+    $file = $dir . '/' . $key . '.json';
+    $tmp = $file . '.' . getmypid() . '.tmp';
+    if (@file_put_contents($tmp, $json, LOCK_EX) !== false) {
+        @rename($tmp, $file);
+    }
+}
+
+function api_cache_clear(): void
+{
+    foreach (glob(api_cache_dir() . '/*.json') ?: [] as $file) {
+        @unlink($file);
+    }
 }

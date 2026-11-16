@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Хост: localhost
--- Время создания: Ноя 16 2026 г., 21:35
+-- Время создания: Ноя 16 2026 г., 23:18
 -- Версия сервера: 8.4.11-11
 -- Версия PHP: 8.3.36
 
@@ -311,7 +311,7 @@ CREATE TABLE `item_bonuses` (
   `stat_value_true` decimal(10,2) DEFAULT NULL,
   `feature_key` int UNSIGNED NOT NULL DEFAULT '0',
   `sort_order` int NOT NULL DEFAULT '0'
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ;
 
 -- --------------------------------------------------------
 
@@ -802,12 +802,7 @@ ALTER TABLE `items`
 --
 ALTER TABLE `item_bonuses`
   ADD PRIMARY KEY (`id`),
-  ADD KEY `idx_item_bonuses_stat` (`stat_id`),
-  ADD KEY `idx_item_bonuses_feature` (`feature_id`),
-  ADD KEY `fk_item_bonuses_text_note` (`text_note_id`),
-  ADD KEY `fk_item_bonuses_stat_source` (`stat_source_id`),
-  ADD KEY `idx_item_bonuses_state` (`state_id`),
-  ADD KEY `idx_item_bonuses_item_sort` (`item_id`,`sort_order`,`id`);
+  ADD UNIQUE KEY `uniq_item_bonus` (`item_id`,`stat_id`,`value_type`,(0));
 
 --
 -- Индексы таблицы `item_bonus_class_restrictions`
@@ -896,9 +891,7 @@ ALTER TABLE `slot_columns`
 --
 ALTER TABLE `slot_rules`
   ADD PRIMARY KEY (`id`),
-  ADD KEY `idx_slot_rules_slot` (`slot_number`),
-  ADD KEY `idx_slot_rules_type` (`item_type_id`),
-  ADD KEY `idx_slot_rules_class` (`class_id`);
+  ADD UNIQUE KEY `uniq_slot_rule` (`class_id`,`slot_number`,(0));
 
 --
 -- Индексы таблицы `stamps`
@@ -1226,17 +1219,6 @@ ALTER TABLE `items`
   ADD CONSTRAINT `fk_items_type` FOREIGN KEY (`item_type_id`) REFERENCES `item_types` (`id`) ON DELETE RESTRICT;
 
 --
--- Ограничения внешнего ключа таблицы `item_bonuses`
---
-ALTER TABLE `item_bonuses`
-  ADD CONSTRAINT `fk_item_bonuses_feature` FOREIGN KEY (`feature_id`) REFERENCES `features` (`id`) ON DELETE SET NULL,
-  ADD CONSTRAINT `fk_item_bonuses_item` FOREIGN KEY (`item_id`) REFERENCES `items` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `fk_item_bonuses_stat` FOREIGN KEY (`stat_id`) REFERENCES `stats` (`id`) ON DELETE RESTRICT,
-  ADD CONSTRAINT `fk_item_bonuses_stat_source` FOREIGN KEY (`stat_source_id`) REFERENCES `stats` (`id`) ON DELETE RESTRICT,
-  ADD CONSTRAINT `fk_item_bonuses_state` FOREIGN KEY (`state_id`) REFERENCES `states` (`id`) ON DELETE SET NULL,
-  ADD CONSTRAINT `fk_item_bonuses_text_note` FOREIGN KEY (`text_note_id`) REFERENCES `text_notes` (`id`) ON DELETE SET NULL;
-
---
 -- Ограничения внешнего ключа таблицы `item_bonus_class_restrictions`
 --
 ALTER TABLE `item_bonus_class_restrictions`
@@ -1290,14 +1272,6 @@ ALTER TABLE `item_type_tabs`
 --
 ALTER TABLE `slots`
   ADD CONSTRAINT `fk_slots_column` FOREIGN KEY (`column_no`) REFERENCES `slot_columns` (`column_no`) ON DELETE RESTRICT;
-
---
--- Ограничения внешнего ключа таблицы `slot_rules`
---
-ALTER TABLE `slot_rules`
-  ADD CONSTRAINT `fk_slot_rules_class` FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `fk_slot_rules_slot` FOREIGN KEY (`slot_number`) REFERENCES `slots` (`slot_number`) ON DELETE RESTRICT,
-  ADD CONSTRAINT `fk_slot_rules_type` FOREIGN KEY (`item_type_id`) REFERENCES `item_types` (`id`) ON DELETE CASCADE;
 
 --
 -- Ограничения внешнего ключа таблицы `stamp_allowed_item_types`

@@ -723,14 +723,52 @@ function api_cacheable_actions(): array
     ]);
 }
 
+function api_cache_key(string $action): ?string
+{
+    // Кэшируем только справочники и bootstrap; items/cards/slot_types/by_ids — динамические.
+    if (!in_array($action, array_merge(api_bootstrap_actions(), ['bootstrap', 'card_types', 'text_notes']), true)) {
+        return null;
+    }
+    $params = [];
+    if ($action === 'stamps') {
+        $raw = (string)($_GET['item_type_id'] ?? '');
+        $params['item_type_id'] = $raw === '' ? '' : (string)(int)$raw;
+    }
+    return $action . '_' . md5(json_encode($params));
+}
+
 function api_output(array $result, bool $cacheable): void
 {
-    $json = json_encode($result, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR);
+    api_output_json(
+        json_encode($result, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR),
+        $cacheable
+    );
+}
+
+function api_output_json(string $json, bool $cacheable): void
+{
     if ($cacheable) {
         $etag = '"' . md5($json) . '"';
         header('ETag: ' . $etag);
         header('Cache-Control: private, max-age=0, must-revalidate');
-        if (trim((string)($_SERVER['HTTP_IF_NONE_MATCH'] ?? '')) === $etag) {
+        $matched = false;
+        foreach (explode(',', (string)($_SERVER['HTTP_IF_NONE_MATCH'] ?? '')) as $candidate) {
+            $candidate = trim($candidate);
+            if ($candidate === '*') {
+                $matched = true;
+                break;
+            }
+            if (str_starts_with($candidate, 'W/')) {
+                $candidate = substr($candidate, 2);
+            }
+            // mod_deflate дописывает -gzip к ETag сжатого ответа
+            $candidate = preg_replace('/-gzip"$/', '"', $candidate);
+            if ($candidate === $etag) {
+                $matched = true;
+                break;
+            }
+        }
+        if ($matched) {
             http_response_code(304);
             header('Content-Length: 0');
             return;
@@ -744,6 +782,14 @@ function api_output(array $result, bool $cacheable): void
 
 $action = (string)($_GET['action'] ?? '');
 try {
+    $cacheKey = api_cache_key($action);
+    if ($cacheKey !== null) {
+        $cached = api_cache_get($cacheKey);
+        if ($cached !== null) {
+            api_output_json($cached, true);
+            return;
+        }
+    }
 $pdo = connect();
 $run = static function (string $action) use ($pdo): array {
 $result = null;
@@ -1512,45 +1558,82 @@ i.name ASC
             $classIds = array_values(array_unique($classIds));
             $classPlaceholders = in_placeholders($classIds);
 
-            $checkStmt = $pdo->prepare("
-                SELECT i.id
-                FROM items i
-                WHERE i.id = ?
-                  AND (i.required_level IS NULL OR i.required_level <= ?)
-                  AND (i.gender = 'any' OR i.gender = ?)
-                  AND EXISTS (
-                      SELECT 1
-                      FROM item_slots s
-                      WHERE s.item_id = i.id
-                        AND s.slot_number = ?
-                  )
-                  AND EXISTS (
-                      SELECT 1
-                      FROM item_classes ic
-                      WHERE ic.item_id = i.id
-                        AND ic.class_id IN ($classPlaceholders)
-                  )
-                LIMIT 1
+            // Правила ячеек: прямые правила класса перекрывают родительские
+            $ruleStmt = $pdo->prepare("
+                SELECT slot_number, class_id, item_type_id, restriction
+                FROM slot_rules
+                WHERE class_id IN ($classPlaceholders)
             ");
+            $ruleStmt->execute($classIds);
 
+            $rulesBySlot = [];
+            foreach ($ruleStmt->fetchAll() as $rule) {
+                $bucket = (int)$rule['class_id'] === $classId ? 'direct' : 'parent';
+                $rulesBySlot[(int)$rule['slot_number']][$bucket][(int)$rule['item_type_id']] = (string)$rule['restriction'];
+            }
+
+            $slotNumbers = slot_numbers();
+            $pairs = [];
             $invalidSlots = [];
 
             foreach ($equipment as $slot => $itemId) {
                 $slot = (int)$slot;
                 $itemId = is_array($itemId) ? (int)($itemId['id'] ?? 0) : (int)$itemId;
 
-                $slotExists = in_array($slot, slot_numbers(), true);
-if (!$slotExists || $itemId <= 0) {
-if ($slotExists) {
-$invalidSlots[] = (string)$slot;
-}
-continue;
-}
+                if (!in_array($slot, $slotNumbers, true)) {
+                    continue;
+                }
+                if ($itemId <= 0) {
+                    $invalidSlots[] = (string)$slot;
+                    continue;
+                }
+                $pairs[$slot] = $itemId;
+            }
 
-                $params = array_merge([$itemId, $level, $gender, $slot], $classIds);
-                $checkStmt->execute($params);
+            // Одна пакетная проверка всех предметов вместо запроса на каждый слот
+            $validPairs = [];
+            if ($pairs) {
+                $itemIds = array_values(array_unique($pairs));
+                $slotList = array_keys($pairs);
+                $itemPlaceholders = in_placeholders($itemIds);
+                $slotPlaceholders = in_placeholders($slotList);
 
-                if (!$checkStmt->fetchColumn()) {
+                $checkStmt = $pdo->prepare("
+                    SELECT i.id, i.item_type_id, s.slot_number
+                    FROM items i
+                    JOIN item_slots s ON s.item_id = i.id
+                    WHERE i.id IN ($itemPlaceholders)
+                      AND s.slot_number IN ($slotPlaceholders)
+                      AND (i.required_level IS NULL OR i.required_level <= ?)
+                      AND (i.gender = 'any' OR i.gender = ?)
+                      AND EXISTS (
+                          SELECT 1
+                          FROM item_classes ic
+                          WHERE ic.item_id = i.id
+                            AND ic.class_id IN ($classPlaceholders)
+                      )
+                ");
+                $checkStmt->execute(array_merge($itemIds, $slotList, [$level, $gender], $classIds));
+
+                foreach ($checkStmt->fetchAll() as $row) {
+                    $validPairs[(int)$row['slot_number']][(int)$row['id']] = (int)$row['item_type_id'];
+                }
+            }
+
+            foreach ($pairs as $slot => $itemId) {
+                $typeId = $validPairs[$slot][$itemId] ?? null;
+                if ($typeId === null) {
+                    $invalidSlots[] = (string)$slot;
+                    continue;
+                }
+
+                $effectiveRules = array_replace(
+                    $rulesBySlot[$slot]['parent'] ?? [],
+                    $rulesBySlot[$slot]['direct'] ?? []
+                );
+                $restriction = $effectiveRules[$typeId] ?? 'allowed';
+
+                if ($restriction === 'denied' || $restriction === 'locked') {
                     $invalidSlots[] = (string)$slot;
                 }
             }
@@ -1617,7 +1700,11 @@ if ($action === 'bootstrap') {
 } else {
     $result = $run($action);
 }
-api_output($result, in_array($action, api_cacheable_actions(), true));
+$json = json_encode($result, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR);
+if ($cacheKey !== null) {
+    api_cache_set($cacheKey, $json);
+}
+api_output_json($json, in_array($action, api_cacheable_actions(), true));
 } catch (Throwable $e) {
 if ($e instanceof RuntimeException) {
 http_response_code(400);
