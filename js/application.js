@@ -5534,6 +5534,7 @@ window.CALC_STATE = CALC_STATE;
 
 let equipmentCalcPromise = null;
 let equipmentCalcTimer = null;
+let equipmentCalcQueued = false;
 
 function getEquippedItemIds() {
     return uniquePositiveIds(
@@ -6030,6 +6031,7 @@ function calculateEquipmentStatTotals() {
 
 async function refreshEquipmentCalculationData(force = false) {
     if (equipmentCalcPromise) {
+        equipmentCalcQueued = true;
         return equipmentCalcPromise;
     }
 
@@ -6053,23 +6055,31 @@ async function refreshEquipmentCalculationData(force = false) {
             return CALC_STATE;
         }
 
-        await ensureItemsLoaded(itemIds);
-        await loadEquipmentServerCards(itemIds);
+        // Волна 1: предметы, серверные карты и серверные печати независимы
+        await Promise.all([
+            ensureItemsLoaded(itemIds),
+            loadEquipmentServerCards(itemIds),
+            loadEquipmentServerStamps(itemIds),
+        ]);
 
         const cardIds = uniquePositiveIds([
             ...collectActiveEquippedCardIds(),
             ...collectEquippedUserCardIds(),
         ]);
+        const stampIds = uniquePositiveIds([
+            ...collectActiveEquippedStampIds(),
+            ...collectEquippedUserStampIds(),
+        ]);
 
-     await ensureCardsLoaded(cardIds);
-     await loadEquipmentServerStamps(itemIds);
-     await ensureStampsLoaded([
-         ...collectActiveEquippedStampIds(),
-         ...collectEquippedUserStampIds(),
-     ]);
-     migrateEquipmentUserCardSnapshots();
-     pruneDeletedUserSelections();
-     calculateEquipmentStatTotals();
+        // Волна 2: добираем недостающие карты и варианты печатей
+        await Promise.all([
+            ensureCardsLoaded(cardIds),
+            ensureStampsLoaded(stampIds),
+        ]);
+
+        migrateEquipmentUserCardSnapshots();
+        pruneDeletedUserSelections();
+        calculateEquipmentStatTotals();
 
         if (!modalOverlay.hidden && typeof renderModalContent === 'function') {
             renderModalContent();
@@ -6079,7 +6089,13 @@ async function refreshEquipmentCalculationData(force = false) {
     })();
 
     try {
-        return await equipmentCalcPromise;
+        const state = await equipmentCalcPromise;
+        equipmentCalcPromise = null;
+        if (equipmentCalcQueued) {
+            equipmentCalcQueued = false;
+            return refreshEquipmentCalculationData(force);
+        }
+        return state;
     } finally {
         equipmentCalcPromise = null;
     }
