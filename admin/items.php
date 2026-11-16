@@ -70,7 +70,7 @@ function items_list_page(string $action, array $menu): void
     $where = ' WHERE 1 = 1';
     $params = [];
     if ($q !== '') {
-        $like = '%' . $q . '%';
+        $like = '%' . addcslashes($q, '\\%_') . '%';
         $where .= ' AND (i.name LIKE ? OR i.description LIKE ? OR EXISTS (
             SELECT 1 FROM item_bonuses b JOIN stats s ON s.id = b.stat_id
             WHERE b.item_id = i.id AND (s.name_ru LIKE ? OR s.alias LIKE ?)))';

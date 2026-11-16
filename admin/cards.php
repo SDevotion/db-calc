@@ -213,7 +213,7 @@ function cards_list_page(string $action, array $menu): void
     $where = ' WHERE 1 = 1';
     $params = [];
     if ($q !== '') {
-        $like = '%' . $q . '%';
+        $like = '%' . addcslashes($q, '\\%_') . '%';
         $where .= ' AND (c.name LIKE ? OR EXISTS (
             SELECT 1 FROM card_bonuses b JOIN stats s ON s.id = b.stat_id
             WHERE b.card_id = c.id AND (s.name_ru LIKE ? OR s.alias LIKE ?)))';

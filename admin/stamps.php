@@ -193,7 +193,7 @@ function stamps_list_page(string $action, array $menu): void
     $where = ' WHERE 1 = 1';
     $params = [];
     if ($q !== '') {
-        $like = '%' . $q . '%';
+        $like = '%' . addcslashes($q, '\\%_') . '%';
         $where .= ' AND (s.name LIKE ? OR EXISTS (
             SELECT 1 FROM stamp_variants v
             JOIN stamp_variant_bonuses b ON b.stamp_variant_id = v.id
