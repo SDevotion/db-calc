@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Калькулятор персонажа</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="js/application.js" defer></script>
+</head>
+
+<body>
+
+    <main class="sheet">
+        <div class="divider"></div>
+
+        <section class="left">
+            <div class="db-error" id="db-error" hidden>
+                Нет соединения с БД. Запусти MySQL и открой <b>install.php</b> через сервер.
+            </div>
+
+            <div class="controls">
+                <div class="field">
+                    <label for="gender">Пол</label>
+                    <select id="gender"></select>
+                </div>
+                <div class="field">
+                    <label for="class">Класс</label>
+                    <select id="class"></select>
+                </div>
+                <div class="field">
+                    <label for="level">Уровень</label>
+                    <input type="number" id="level" min="1" max="19" value="1">
+                </div>
+            </div>
+
+            <div class="slots"></div>
+        </section>
+
+        <section class="right"></section>
+    </main>
+
+    <div class="modal-overlay" id="modal-overlay" hidden>
+        <div class="modal" id="modal">
+            <div class="modal-col modal-left" id="modal-left">
+                <div id="modal-tabs"></div>
+            </div>
+            <div class="modal-col modal-center" id="modal-center"></div>
+            <div class="modal-col modal-right" id="modal-right">
+                <div class="modal-search">
+                    <input type="search" id="item-search" autocomplete="off" placeholder="Поиск...">
+                </div>
+
+                <div class="modal-upgrade">
+                    <label for="upgrade-level">Улучшение</label>
+                    <select id="upgrade-level" disabled></select>
+                </div>
+
+                <div class="modal-sockets" id="modal-sockets" hidden></div>
+
+                <div class="modal-features" id="modal-features"></div>
+                <div class="field modal-state-field">
+                    <label for="current-state">Состояние</label>
+                    <select id="current-state" disabled></select>
+                </div>
+
+                <div class="modal-state-field" id="modal-stamp-color-field" hidden>
+                    <label for="stamp-color">Цвет печати</label>
+                    <select id="stamp-color"></select>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <template id="item-card-template">
+        <button type="button" class="item-card">
+            <div class="item-header">
+                <div class="item-icon-wrap">
+                    <img class="item-icon" alt="">
+                    <span class="item-icon-fallback" hidden>?</span>
+                </div>
+
+                <div class="item-info">
+                    <div class="item-name"></div>
+                    <div class="item-type"></div>
+                </div>
+            </div>
+
+            <ul class="item-stats"></ul>
+
+            <div class="item-footer">
+                <span class="item-required-level">
+                    Требуемый уровень: <span class="item-footer-value"></span>
+                </span>
+
+                <span class="item-grade">
+                    Грейд: <span class="item-footer-value"></span>
+                </span>
+            </div>
+        </button>
+    </template>
+</body>
+
+</html>
