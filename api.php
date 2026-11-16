@@ -1319,24 +1319,45 @@ AND (i.gender = 'any' OR i.gender = ?)
                 $cardsById[(int)$card['id']] = $card;
             }
 
-            $response = [];
+            // Полная сетка сокетов 1..N, как в item_cards: пустые сокеты тоже присутствуют
+            $countStmt = $pdo->prepare("SELECT id, sockets FROM items WHERE id IN ($placeholders)");
+            $countStmt->execute($itemIds);
+            $socketCounts = [];
+            foreach ($countStmt->fetchAll() as $itemRow) {
+                $socketCounts[(int)$itemRow['id']] = (int)$itemRow['sockets'];
+            }
 
+            $response = [];
             foreach ($itemIds as $itemId) {
-                $response[(string)$itemId] = [
-                    'sockets' => [],
-                ];
+                $sockets = [];
+                $count = $socketCounts[$itemId] ?? 0;
+                for ($socket = 1; $socket <= $count; $socket++) {
+                    $sockets[$socket] = [
+                        'socket_number' => $socket,
+                        'is_locked' => 0,
+                        'card' => null,
+                    ];
+                }
+                $response[(string)$itemId] = ['sockets' => $sockets];
             }
 
             foreach ($rows as $row) {
                 $itemId = (int)$row['item_id'];
-                $cardId = (int)$row['card_id'];
-
-                $response[(string)$itemId]['sockets'][] = [
-                    'socket_number' => (int)$row['socket_number'],
+                $socket = (int)$row['socket_number'];
+                if (!isset($response[(string)$itemId]['sockets'][$socket])) {
+                    continue;
+                }
+                $response[(string)$itemId]['sockets'][$socket] = [
+                    'socket_number' => $socket,
                     'is_locked' => (int)$row['is_locked'],
-                    'card' => $cardsById[$cardId] ?? null,
+                    'card' => $cardsById[(int)$row['card_id']] ?? null,
                 ];
             }
+
+            foreach ($response as &$entry) {
+                $entry['sockets'] = array_values($entry['sockets']);
+            }
+            unset($entry);
 
             $result = $response;
             break;
