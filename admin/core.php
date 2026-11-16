@@ -26,6 +26,16 @@ if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
+// Любая запись в админке сбрасывает серверный кэш API.
+// Проверка auth на момент shutdown — неаутентифицированный POST кэш не сбрасывает.
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+    register_shutdown_function(static function (): void {
+        if (auth_check()) {
+            api_cache_clear();
+        }
+    });
+}
+
 /* ---------- Базовые хелперы ---------- */
 
 function db(): PDO

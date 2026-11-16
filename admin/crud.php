@@ -629,7 +629,8 @@ function crud_definitions(): array
         ],
         'unique' => [['cols' => ['key'], 'message' => 'Параметр с таким ключом уже существует.']],
         'validate' => function (array &$d, $key, PDO $pdo): void {
-            $system = ['max_sockets', 'max_character_level', 'max_set_cards', 'upgrade_rounding'];
+            $system = ['max_sockets', 'max_character_level', 'max_set_cards', 'upgrade_rounding',
+                'stamp_quality_min_level', 'stamp_quality_max_level', 'stamp_value_level', 'stamp_round_tolerance'];
             if ((string)$key !== '' && in_array((string)$key, $system, true) && $d['key'] !== (string)$key) {
                 throw new RuntimeException('Ключ системного параметра изменять нельзя.');
             }
@@ -646,6 +647,9 @@ function crud_definitions(): array
                 'max_sockets' => [0, 16],
                 'max_character_level' => [1, 255],
                 'max_set_cards' => [1, 255],
+                'stamp_quality_min_level' => [0, 65535],
+                'stamp_quality_max_level' => [1, 65535],
+                'stamp_value_level' => [1, 65535],
             ];
             if ($d['type'] === 'int' && isset($ranges[$d['key']])) {
                 [$lo, $hi] = $ranges[$d['key']];
@@ -654,10 +658,30 @@ function crud_definitions(): array
                     throw new RuntimeException('Значение должно быть от ' . $lo . ' до ' . $hi . '.');
                 }
             }
+            if ($d['key'] === 'stamp_round_tolerance') {
+                $raw = str_replace(',', '.', $d['value']);
+                if (!is_numeric($raw) || (float)$raw <= 0 || (float)$raw > 1) {
+                    throw new RuntimeException('Допуск округления печати должен быть числом в диапазоне (0, 1].');
+                }
+            }
+            if (in_array($d['key'], ['stamp_quality_min_level', 'stamp_quality_max_level'], true)) {
+                $otherKey = $d['key'] === 'stamp_quality_min_level' ? 'stamp_quality_max_level' : 'stamp_quality_min_level';
+                $st = $pdo->prepare('SELECT `value` FROM settings WHERE `key` = ?');
+                $st->execute([$otherKey]);
+                $otherVal = $st->fetchColumn();
+                if ($otherVal !== false) {
+                    $lo = $d['key'] === 'stamp_quality_min_level' ? (int)$d['value'] : (int)$otherVal;
+                    $hi = $d['key'] === 'stamp_quality_max_level' ? (int)$d['value'] : (int)$otherVal;
+                    if ($lo >= $hi) {
+                        throw new RuntimeException('Нижняя граница уровня печати должна быть меньше верхней.');
+                    }
+                }
+            }
         },
         'guards' => [[
             'sql' => "SELECT COUNT(*) FROM settings WHERE `key` = ?
-                AND `key` IN ('max_sockets','max_character_level','max_set_cards','upgrade_rounding')",
+                AND `key` IN ('max_sockets','max_character_level','max_set_cards','upgrade_rounding',
+                    'stamp_quality_min_level','stamp_quality_max_level','stamp_value_level','stamp_round_tolerance')",
             'message' => 'Этот параметр используется кодом и не может быть удалён.',
         ]],
         'columns' => [

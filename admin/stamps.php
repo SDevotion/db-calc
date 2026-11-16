@@ -139,13 +139,25 @@ function stamp_quality_for(float $displayValue, float $minCoef, float $maxCoef, 
     if ($coef <= 0) {
         return number_format($displayValue, 2, '.', '');
     }
-    $limit = min((int)ceil($displayValue / $coef) + 2, 100000);
-    for ($q = 1; $q <= $limit; $q++) {
-        if (stamp_shown_at((float)$q, $coef, $tolerance) === $displayValue) {
-            return number_format((float)$q, 2, '.', '');
+
+    // Формула выдаёт целое D, когда coef*q лежит примерно в (D-0.98, D+0.02].
+    // Берём середину полосы и подбираем q сразу в точности БД (2 знака),
+    // проверяя той же формулой, что и фронт.
+    $center = ($displayValue - 0.5) / $coef;
+    for ($i = 0; $i <= 5000; $i++) {
+        $offsets = $i === 0 ? [0.0] : [$i * 0.01, -$i * 0.01];
+        foreach ($offsets as $offset) {
+            $candidate = number_format(round($center + $offset, 2), 2, '.', '');
+            if (stamp_shown_at((float)$candidate, $coef, $tolerance) === $displayValue) {
+                return $candidate;
+            }
         }
     }
-    return number_format(round($displayValue / $coef, 6), 2, '.', '');
+
+    throw new RuntimeException(
+        'Не удалось подобрать качество для значения ' . $displayValue
+        . ' (коэффициент ' . $coef . '). Измените значение или коэффициенты характеристики.'
+    );
 }
 
 /* ======================= Список печатей ======================= */
@@ -609,6 +621,9 @@ function stamp_bonuses_page(string $action, array $menu): void
                 $rawDisplay = trim((string)($_POST['quality_value'] ?? ''));
             }
             $displayValue = (float)read_decimal($rawDisplay, 'Значение на уровне ' . $refLevel);
+            if (floor($displayValue) !== $displayValue) {
+                throw new RuntimeException('Значение печати должно быть целым числом: формула качества всегда выдаёт целое.');
+            }
             [$minCoef, $maxCoef] = stamp_stat_coefs($stat, $valueType);
             $qualityValue = stamp_quality_for($displayValue, $minCoef, $maxCoef, $refLevel, $minLevel, $maxLevel, $tolerance);
             $displayValueSql = number_format($displayValue, 2, '.', '');
@@ -776,7 +791,7 @@ function stamp_bonuses_page(string $action, array $menu): void
                 <div class="field"><label for="stat_id">Характеристика</label>
                     <select id="stat_id" name="stat_id" required><?= stamp_stat_options($stats, (int)$values['stat_id']) ?></select></div>
                 <div class="field"><label for="display_value">Значение на уровне <?= $refLevel ?></label>
-                    <input type="number" id="display_value" name="display_value" step="0.01" required value="<?= e($values['display_value']) ?>">
+                    <input type="number" id="display_value" name="display_value" step="1" required value="<?= e($values['display_value']) ?>">
                     <div class="form-help">Максимум для этого цвета. Сервер сам подберёт целое качество (quality_value).</div>
                     <div class="form-help" id="stamp-coef-hint"></div></div>
                 <div class="field"><label for="value_type">Тип значения</label>
