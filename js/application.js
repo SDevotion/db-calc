@@ -5,6 +5,35 @@ const FEATURE_CHECKBOXES_KEY = 'feature_checkboxes_v2';
 const CURRENT_STATE_STORAGE_KEY = 'current_state_v1';
 const CHARACTER_STORAGE_KEY = 'character_v1';
 
+/* --- Безопасный localStorage: приватный режим / квота не роняют обработчики --- */
+let storageWarned = false;
+
+function storageSet(key, value) {
+    try {
+        localStorage.setItem(key, value);
+    } catch (e) {
+        if (!storageWarned) {
+            storageWarned = true;
+            console.warn('localStorage недоступен — выбор не сохранится между сессиями.', e);
+        }
+    }
+}
+
+function storageGet(key) {
+    try {
+        return localStorage.getItem(key);
+    } catch (e) {
+        return null;
+    }
+}
+
+function storageRemove(key) {
+    try {
+        localStorage.removeItem(key);
+    } catch (e) {
+        /* noop */ }
+}
+
 /* --- Отмена устаревших запросов --- */
 const REQUEST_CONTROLLERS = new Map();
 
@@ -36,95 +65,136 @@ function abortRequest(key) {
         REQUEST_CONTROLLERS.delete(key);
     }
 }
+const REQUEST_TIMEOUT_MS = 15000;
+async function fetchWithTimeout(url, options = {}) {
+    const controller = new AbortController();
+    const external = options.signal;
+    const onAbort = () => controller.abort();
+    if (external) {
+        if (external.aborted) {
+            controller.abort();
+        } else {
+            external.addEventListener('abort', onAbort, {
+                once: true
+            });
+        }
+    }
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+        return await fetch(url, {
+            ...options,
+            signal: controller.signal
+        });
+    } catch (e) {
+        if (controller.signal.aborted && !(external && external.aborted)) {
+            throw new Error('Превышено время ожидания ответа сервера.');
+        }
+        throw e;
+    } finally {
+        clearTimeout(timer);
+        if (external) {
+            external.removeEventListener('abort', onAbort);
+        }
+    }
+}
 
 /* --- Ошибки загрузки справочников --- */
 const ENUMS = {};
+
 function enumRows(group, scope = '') {
-const rows = Array.isArray(ENUMS[group]) ? ENUMS[group] : [];
-return scope
-    ? rows.filter(row => Array.isArray(row.scope) && row.scope.includes(scope))
-    : rows;
+    const rows = Array.isArray(ENUMS[group]) ? ENUMS[group] : [];
+    return scope ?
+        rows.filter(row => Array.isArray(row.scope) && row.scope.includes(scope)) :
+        rows;
 }
+
 function applyEnumLabels(payload) {
-Object.keys(ENUMS).forEach(key => delete ENUMS[key]);
-if (payload && typeof payload === 'object') {
-    Object.entries(payload).forEach(([group, rows]) => {
-        ENUMS[group] = Array.isArray(rows) ? rows : [];
+    Object.keys(ENUMS).forEach(key => delete ENUMS[key]);
+    if (payload && typeof payload === 'object') {
+        Object.entries(payload).forEach(([group, rows]) => {
+            ENUMS[group] = Array.isArray(rows) ? rows : [];
+        });
+    }
+    REASONS.clear();
+    MISSING_REASONS.clear();
+    enumRows('reason').forEach(row => {
+        REASONS.set(String(row.code), String(row.name || ''));
     });
 }
-REASONS.clear();
-MISSING_REASONS.clear();
-enumRows('reason').forEach(row => {
-    REASONS.set(String(row.code), String(row.name || ''));
-});
-}
 async function loadEnumLabels() {
-try {
-    applyEnumLabels(fromBootstrap('enum_labels') ?? await apiJson('enum_labels'));
-    if (!REASONS.size) {
-        reportLoadError('тексты причин', new Error('В enum_labels нет группы reason.'));
+    try {
+        applyEnumLabels(fromBootstrap('enum_labels') ?? await apiJson('enum_labels'));
+        if (!REASONS.size) {
+            reportLoadError('тексты причин', new Error('В enum_labels нет группы reason.'));
+        }
+    } catch (e) {
+        reportLoadError('подписи кодов', e);
     }
-} catch (e) {
-    reportLoadError('подписи кодов', e);
 }
-}
+
 function renderGenderSelect() {
-if (!genderSelect) {
-    return;
-}
-const rows = enumRows('gender', 'character');
-if (!rows.length) {
-    return;
-}
-const current = genderSelect.value;
-genderSelect.textContent = '';
-rows.forEach(row => genderSelect.appendChild(new Option(row.name, row.code)));
-genderSelect.value = rows.some(row => row.code === current) ? current : rows[0].code;
-}
-const SETTINGS = {
-max_sockets: 3,
-max_character_level: 65,
-max_set_cards: 64,
-upgrade_rounding: 'ceil',
-stamp_quality_min_level: 10,
-stamp_quality_max_level: 60,
-stamp_round_tolerance: 0.98,
-stamp_value_level: 65,
-};
-function settingInt(key, fallback) {
-const n = Number(SETTINGS[key]);
-return Number.isFinite(n) ? n : fallback;
-}
-function applySettings(rows) {
-if (!rows || typeof rows !== 'object') {
-    return;
-}
-Object.keys(SETTINGS).forEach(key => {
-    if (!Object.prototype.hasOwnProperty.call(rows, key)) {
+    if (!genderSelect) {
         return;
     }
-    SETTINGS[key] = typeof SETTINGS[key] === 'number'
-        ? Number(rows[key])
-        : String(rows[key]);
-});
+    const rows = enumRows('gender', 'character');
+    if (!rows.length) {
+        return;
+    }
+    const current = genderSelect.value;
+    genderSelect.textContent = '';
+    rows.forEach(row => genderSelect.appendChild(new Option(row.name, row.code)));
+    genderSelect.value = rows.some(row => row.code === current) ? current : rows[0].code;
 }
+const SETTINGS = {
+    max_sockets: 3,
+    max_character_level: 65,
+    max_set_cards: 64,
+    upgrade_rounding: 'ceil',
+    stamp_quality_min_level: 10,
+    stamp_quality_max_level: 60,
+    stamp_round_tolerance: 0.98,
+    stamp_value_level: 65,
+};
+
+function settingInt(key, fallback) {
+    const n = Number(SETTINGS[key]);
+    return Number.isFinite(n) ? n : fallback;
+}
+
+function applySettings(rows) {
+    if (!rows || typeof rows !== 'object') {
+        return;
+    }
+    Object.keys(SETTINGS).forEach(key => {
+        if (!Object.prototype.hasOwnProperty.call(rows, key)) {
+            return;
+        }
+        SETTINGS[key] = typeof SETTINGS[key] === 'number' ?
+            Number(rows[key]) :
+            String(rows[key]);
+    });
+}
+
 function roundUpgradeValue(value) {
-const n = Number(value);
-if (!Number.isFinite(n)) {
-    return 0;
-}
-switch (String(SETTINGS.upgrade_rounding || 'ceil')) {
-    case 'floor': return Math.floor(n);
-    case 'round': return Math.round(n);
-    default: return Math.ceil(n);
-}
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+        return 0;
+    }
+    switch (String(SETTINGS.upgrade_rounding || 'ceil')) {
+        case 'floor':
+            return Math.floor(n);
+        case 'round':
+            return Math.round(n);
+        default:
+            return Math.ceil(n);
+    }
 }
 async function loadSettings() {
-try {
-    applySettings(fromBootstrap('settings') ?? await apiJson('settings'));
-} catch (e) {
-    reportLoadError('параметры', e);
-}
+    try {
+        applySettings(fromBootstrap('settings') ?? await apiJson('settings'));
+    } catch (e) {
+        reportLoadError('параметры', e);
+    }
 }
 let BOOTSTRAP_DATA = null;
 async function loadBootstrap() {
@@ -308,7 +378,7 @@ function initModalA11y() {
 }
 
 function saveCharacterSelection() {
-    localStorage.setItem(CHARACTER_STORAGE_KEY, JSON.stringify({
+    storageSet(CHARACTER_STORAGE_KEY, JSON.stringify({
         gender: genderSelect.value,
         className: classSelect.value,
         level: Number(level.value) || 1,
@@ -369,8 +439,15 @@ const EQUIPMENT_SERVER_STAMPS = new Map();
 let currentStampsAll = [];
 let stampsItemType = null;
 let stampColorId = null;
+
 function emptyItemStampState() {
-return { loadedItemId: null, itemTypeId: null, isLocked: false, variant: null, loading: false };
+    return {
+        loadedItemId: null,
+        itemTypeId: null,
+        isLocked: false,
+        variant: null,
+        loading: false
+    };
 }
 let itemStampState = emptyItemStampState();
 /* Offline MathHelper.GetStampValue при minCoef=0, maxCoef=1.
@@ -382,9 +459,9 @@ function computeStampQualityValue(baseValue, internalLevel, minCoef, maxCoef) {
     const tolerance = Number(SETTINGS.stamp_round_tolerance ?? 0.98);
     const span = maxLevel - minLevel;
     const above = Math.max(0, Number(internalLevel || 0) - minLevel);
-    const coef = span > 0
-        ? Number(minCoef) + ((Number(maxCoef) - Number(minCoef)) / span) * above
-        : Number(minCoef);
+    const coef = span > 0 ?
+        Number(minCoef) + ((Number(maxCoef) - Number(minCoef)) / span) * above :
+        Number(minCoef);
     const raw = Math.round(coef * Number(baseValue || 0) * 1e9) / 1e9;
     if (!Number.isFinite(raw)) {
         return 0;
@@ -392,29 +469,35 @@ function computeStampQualityValue(baseValue, internalLevel, minCoef, maxCoef) {
     const ceil = Math.ceil(raw);
     return (ceil - raw < tolerance) ? ceil : Math.trunc(raw);
 }
+
 function getStampInternalLevel(item, savedItem = null) {
-const source = item || savedItem || {};
-const internal = Number(source.internal_level || 0);
-if (internal > 0) {
-    return internal;
+    const source = item || savedItem || {};
+    const internal = Number(source.internal_level || 0);
+    if (internal > 0) {
+        return internal;
+    }
+    const required = Number(source.required_level || 0);
+    if (required > 0) {
+        return required;
+    }
+    return settingInt('stamp_quality_min_level', 10);
 }
-const required = Number(source.required_level || 0);
-if (required > 0) {
-    return required;
-}
-return settingInt('stamp_quality_min_level', 10);
-}
+
 function markStampVariantFull(variant) {
-if (!variant) {
-    return;
+    if (!variant) {
+        return;
+    }
+    const id = Number(variant.id || 0);
+    if (!id) {
+        return;
+    }
+    const prev = STAMP_VARIANTS.get(id) || {};
+    STAMP_VARIANTS.set(id, {
+        ...prev,
+        ...variant
+    });
 }
-const id = Number(variant.id || 0);
-if (!id) {
-    return;
-}
-const prev = STAMP_VARIANTS.get(id) || {};
-STAMP_VARIANTS.set(id, { ...prev, ...variant });
-}
+
 function getFullStampVariant(id, fallback = null) {
     const num = Number(id || 0);
     const known = num ? STAMP_VARIANTS.get(num) : null;
@@ -424,10 +507,13 @@ function getFullStampVariant(id, fallback = null) {
     // Снапшот из localStorage не пишем в STAMP_VARIANTS: иначе удалённые
     // в админке варианты и их цвета воскресают в списках и в select.
     if (fallback && num) {
-        return { ...fallback };
+        return {
+            ...fallback
+        };
     }
     return null;
 }
+
 function makeStampSnapshot(variant) {
     return {
         id: Number(variant.id || 0),
@@ -439,108 +525,121 @@ function makeStampSnapshot(variant) {
     };
 }
 async function loadStamps() {
-try {
-    const rows = fromBootstrap('stamps') ?? await apiJson('stamps');
-    STAMP_VARIANTS.clear();
-    (Array.isArray(rows) ? rows : []).forEach(markStampVariantFull);
-} catch (e) {
-    reportLoadError('печати', e);
-}
+    try {
+        const rows = fromBootstrap('stamps') ?? await apiJson('stamps');
+        STAMP_VARIANTS.clear();
+        (Array.isArray(rows) ? rows : []).forEach(markStampVariantFull);
+    } catch (e) {
+        reportLoadError('печати', e);
+    }
 }
 async function ensureStampsLoaded(ids) {
-const missing = uniquePositiveIds(ids).filter(id => {
-    const variant = STAMP_VARIANTS.get(id);
-    return !variant || !Array.isArray(variant.bonuses);
-});
-if (!missing.length) {
-    return;
-}
-const data = await apiJson('stamps_by_ids', { ids: missing.join(',') });
-(Array.isArray(data) ? data : []).forEach(markStampVariantFull);
-}
-async function loadEquipmentServerStamps(itemIds) {
-const ids = uniquePositiveIds(itemIds);
-if (!ids.length) {
-    EQUIPMENT_SERVER_STAMPS.clear();
-    return;
-}
-const data = await apiJson('equipment_stamps', { item_ids: ids.join(',') });
-EQUIPMENT_SERVER_STAMPS.clear();
-ids.forEach(id => {
-    const entry = data[String(id)] || data[id] || { is_locked: 0, variant: null };
-    if (entry.variant) {
-        markStampVariantFull(entry.variant);
-    }
-    EQUIPMENT_SERVER_STAMPS.set(id, {
-        is_locked: Number(entry.is_locked || 0),
-        variant: entry.variant || null,
+    const missing = uniquePositiveIds(ids).filter(id => {
+        const variant = STAMP_VARIANTS.get(id);
+        return !variant || !Array.isArray(variant.bonuses);
     });
-});
-}
-function getActiveStampForEquippedItem(savedItem) {
-if (!savedItem) {
-    return null;
-}
-const itemId = Number(savedItem.id || 0);
-if (!itemId) {
-    return null;
-}
-const server = EQUIPMENT_SERVER_STAMPS.get(itemId) || null;
-const locked = server ? Number(server.is_locked || 0) === 1 : false;
-if (locked) {
-    return server.variant ? getFullStampVariant(server.variant.id, server.variant) : null;
-}
-if (Object.prototype.hasOwnProperty.call(savedItem, 'user_stamp')) {
-    const value = savedItem.user_stamp;
-    if (!value) {
-        return null;
-    }
-    if (typeof value === 'object') {
-        return getFullStampVariant(value.id, value);
-    }
-    return getFullStampVariant(value, null);
-}
-return server && server.variant ? getFullStampVariant(server.variant.id, server.variant) : null;
-}
-function collectEquippedUserStampIds() {
-const ids = new Set();
-Object.values(equipment || {}).forEach(savedItem => {
-    const value = savedItem && savedItem.user_stamp;
-    const id = value && typeof value === 'object' ? Number(value.id || 0) : Number(value || 0);
-    if (id) {
-        ids.add(id);
-    }
-});
-return Array.from(ids);
-}
-function collectActiveEquippedStampIds() {
-const ids = new Set();
-Object.values(equipment || {}).forEach(savedItem => {
-    if (!isSavedItemActiveForCalc(savedItem)) {
+    if (!missing.length) {
         return;
     }
-    const variant = getActiveStampForEquippedItem(savedItem);
-    const id = Number(variant && variant.id ? variant.id : 0);
-    if (id) {
-        ids.add(id);
+    const data = await apiJson('stamps_by_ids', {
+        ids: missing.join(',')
+    });
+    (Array.isArray(data) ? data : []).forEach(markStampVariantFull);
+}
+async function loadEquipmentServerStamps(itemIds) {
+    const ids = uniquePositiveIds(itemIds);
+    if (!ids.length) {
+        EQUIPMENT_SERVER_STAMPS.clear();
+        return;
     }
-});
-return Array.from(ids);
+    const data = await apiJson('equipment_stamps', {
+        item_ids: ids.join(',')
+    });
+    EQUIPMENT_SERVER_STAMPS.clear();
+    ids.forEach(id => {
+        const entry = data[String(id)] || data[id] || {
+            is_locked: 0,
+            variant: null
+        };
+        if (entry.variant) {
+            markStampVariantFull(entry.variant);
+        }
+        EQUIPMENT_SERVER_STAMPS.set(id, {
+            is_locked: Number(entry.is_locked || 0),
+            variant: entry.variant || null,
+        });
+    });
 }
+
+function getActiveStampForEquippedItem(savedItem) {
+    if (!savedItem) {
+        return null;
+    }
+    const itemId = Number(savedItem.id || 0);
+    if (!itemId) {
+        return null;
+    }
+    const server = EQUIPMENT_SERVER_STAMPS.get(itemId) || null;
+    const locked = server ? Number(server.is_locked || 0) === 1 : false;
+    if (locked) {
+        return server.variant ? getFullStampVariant(server.variant.id, server.variant) : null;
+    }
+    if (Object.prototype.hasOwnProperty.call(savedItem, 'user_stamp')) {
+        const value = savedItem.user_stamp;
+        if (!value) {
+            return null;
+        }
+        if (typeof value === 'object') {
+            return getFullStampVariant(value.id, value);
+        }
+        return getFullStampVariant(value, null);
+    }
+    return server && server.variant ? getFullStampVariant(server.variant.id, server.variant) : null;
+}
+
+function collectEquippedUserStampIds() {
+    const ids = new Set();
+    Object.values(equipment || {}).forEach(savedItem => {
+        const value = savedItem && savedItem.user_stamp;
+        const id = value && typeof value === 'object' ? Number(value.id || 0) : Number(value || 0);
+        if (id) {
+            ids.add(id);
+        }
+    });
+    return Array.from(ids);
+}
+
+function collectActiveEquippedStampIds() {
+    const ids = new Set();
+    Object.values(equipment || {}).forEach(savedItem => {
+        if (!isSavedItemActiveForCalc(savedItem)) {
+            return;
+        }
+        const variant = getActiveStampForEquippedItem(savedItem);
+        const id = Number(variant && variant.id ? variant.id : 0);
+        if (id) {
+            ids.add(id);
+        }
+    });
+    return Array.from(ids);
+}
+
 function isStampAllowedForItemType(variant, itemTypeId) {
-const allowed = Array.isArray(variant && variant.allowed_item_type_ids) ? variant.allowed_item_type_ids : [];
-if (!allowed.length) {
-    return true;
+    const allowed = Array.isArray(variant && variant.allowed_item_type_ids) ? variant.allowed_item_type_ids : [];
+    if (!allowed.length) {
+        return true;
+    }
+    return allowed.map(Number).includes(Number(itemTypeId || 0));
 }
-return allowed.map(Number).includes(Number(itemTypeId || 0));
-}
+
 function tabRequiresItem(slug) {
-return slug === 'cards' || slug === 'stamps';
+    return slug === 'cards' || slug === 'stamps';
 }
+
 function getGradeName(code) {
-const key = String(code || '').trim().toUpperCase();
-const row = GRADES.get(key);
-return row && row.name ? row.name : key;
+    const key = String(code || '').trim().toUpperCase();
+    const row = GRADES.get(key);
+    return row && row.name ? row.name : key;
 }
 
 let prevSelected = null;
@@ -581,7 +680,6 @@ const modalOverlay = document.getElementById('modal-overlay');
 const modalCenter = document.getElementById('modal-center');
 const modalFeatures = document.getElementById('modal-features');
 const modalSockets = document.getElementById('modal-sockets');
-const modalLeft = document.getElementById('modal-left');
 const modalTabs = document.getElementById('modal-tabs');
 
 const searchInput = document.getElementById('item-search');
@@ -606,16 +704,16 @@ function formatReasonTemplate(template, values = {}) {
 }
 
 function reason(key, values = {}) {
-const code = String(key);
-const template = REASONS.get(code);
-if (template === undefined) {
-    if (!MISSING_REASONS.has(code)) {
-        MISSING_REASONS.add(code);
-        console.warn('Нет текста причины в enum_labels: reason/' + code);
+    const code = String(key);
+    const template = REASONS.get(code);
+    if (template === undefined) {
+        if (!MISSING_REASONS.has(code)) {
+            MISSING_REASONS.add(code);
+            console.warn('Нет текста причины в enum_labels: reason/' + code);
+        }
+        return '';
     }
-    return '';
-}
-return formatReasonTemplate(template, values);
+    return formatReasonTemplate(template, values);
 }
 
 function reasonNumberOrNull(value) {
@@ -726,9 +824,11 @@ function buildStatDependencyReason(bonus) {
         const threshold = Math.max(0, Number(bonus.stat_threshold || 0));
         const trueValue = reasonNumberOrNull(bonus.stat_value_true);
 
-     const valueSuffix = trueValue === null
-         ? ''
-         : ', ' + reason('statValueSuffix', { value: reasonFormatNumber(trueValue) });
+        const valueSuffix = trueValue === null ?
+            '' :
+            ', ' + reason('statValueSuffix', {
+                value: reasonFormatNumber(trueValue)
+            });
 
         return reason('statThreshold', {
             source,
@@ -762,9 +862,9 @@ function buildStatDependencyReason(bonus) {
             });
         });
 
-     return reason('statMultiple', {
-         parts: parts.join(' ' + reason(mode === 'any' ? 'joinOr' : 'joinAnd') + ' '),
-     });
+        return reason('statMultiple', {
+            parts: parts.join(' ' + reason(mode === 'any' ? 'joinOr' : 'joinAnd') + ' '),
+        });
     }
 
     return reason('statGeneric');
@@ -1094,19 +1194,13 @@ function normalizeCurrentStateId(value) {
     return getDefaultStateId();
 }
 
-function loadCurrentStateId() {
-    const raw = localStorage.getItem(CURRENT_STATE_STORAGE_KEY);
-
-    return normalizeCurrentStateId(raw);
-}
-
 function saveCurrentStateId() {
     if (currentStateId === null || currentStateId === undefined) {
-        localStorage.removeItem(CURRENT_STATE_STORAGE_KEY);
+        storageRemove(CURRENT_STATE_STORAGE_KEY);
         return;
     }
 
-    localStorage.setItem(CURRENT_STATE_STORAGE_KEY, String(currentStateId));
+    storageSet(CURRENT_STATE_STORAGE_KEY, String(currentStateId));
 }
 
 function getCurrentStateName() {
@@ -1413,7 +1507,9 @@ function getFullCard(id, fallback = null) {
         return known;
     }
     if (fallback) {
-        return { ...fallback };
+        return {
+            ...fallback
+        };
     }
     return null;
 }
@@ -1514,20 +1610,27 @@ async function apiJson(action, params = {}, signal = undefined) {
         action,
         ...params
     });
-    const res = await fetch(API + '?' + query.toString(), {
+    const res = await fetchWithTimeout(API + '?' + query.toString(), {
         signal
     });
 
-    if (!res.ok) {
-        throw new Error('HTTP ' + res.status);
+    const text = await res.text();
+    let data = null;
+    let parseFailed = false;
+    try {
+        data = text ? JSON.parse(text) : null;
+    } catch (e) {
+        parseFailed = true;
     }
-
-    const data = await res.json();
-
+    if (!res.ok) {
+        throw new Error(data && data.error ? data.error : 'HTTP ' + res.status);
+    }
+    if (parseFailed) {
+        throw new Error('Некорректный JSON в ответе сервера.');
+    }
     if (data && data.error) {
         throw new Error(data.error);
     }
-
     return data;
 }
 
@@ -1684,71 +1787,73 @@ async function loadUpgrades() {
 }
 
 async function loadItemTypeTabs() {
-try {
-    const data = fromBootstrap('item_type_tabs') ?? await apiJson('item_type_tabs');
-    TYPE_HIDDEN_TABS.clear();
-    Object.entries(data || {}).forEach(([typeId, slugs]) => {
-        TYPE_HIDDEN_TABS.set(Number(typeId), new Set((Array.isArray(slugs) ? slugs : []).map(String)));
-    });
-} catch (e) {
-    reportLoadError('видимость вкладок', e);
+    try {
+        const data = fromBootstrap('item_type_tabs') ?? await apiJson('item_type_tabs');
+        TYPE_HIDDEN_TABS.clear();
+        Object.entries(data || {}).forEach(([typeId, slugs]) => {
+            TYPE_HIDDEN_TABS.set(Number(typeId), new Set((Array.isArray(slugs) ? slugs : []).map(String)));
+        });
+    } catch (e) {
+        reportLoadError('видимость вкладок', e);
+    }
 }
-}
+
 function isTabVisibleForType(slug, typeId) {
-const hidden = TYPE_HIDDEN_TABS.get(Number(typeId || 0));
-return !(hidden && hidden.has(String(slug)));
+    const hidden = TYPE_HIDDEN_TABS.get(Number(typeId || 0));
+    return !(hidden && hidden.has(String(slug)));
 }
+
 function getVisibleTabSlugs() {
-const saved = getSavedActiveItem();
-const slugs = [];
-TABS.forEach(tab => {
-    let visible;
-    if (saved && Number(saved.type_id || 0) > 0) {
-        visible = isTabVisibleForType(tab.slug, saved.type_id);
-    } else {
-        let types = activeSlot !== null
-            ? (availableTypesBySlot.get(Number(activeSlot)) || new Set())
-            : new Set();
-        if (!types.size && Array.isArray(currentItems)) {
-            types = new Set(currentItems
-                .map(item => Number(item.item_type_id || 0))
-                .filter(id => id > 0));
+    const saved = getSavedActiveItem();
+    const slugs = [];
+    TABS.forEach(tab => {
+        let visible;
+        if (saved && Number(saved.type_id || 0) > 0) {
+            visible = isTabVisibleForType(tab.slug, saved.type_id);
+        } else {
+            let types = activeSlot !== null ?
+                (availableTypesBySlot.get(Number(activeSlot)) || new Set()) :
+                new Set();
+            if (!types.size && Array.isArray(currentItems)) {
+                types = new Set(currentItems
+                    .map(item => Number(item.item_type_id || 0))
+                    .filter(id => id > 0));
+            }
+            visible = types.size ?
+                Array.from(types).some(typeId => isTabVisibleForType(tab.slug, typeId)) :
+                true;
         }
-        visible = types.size
-            ? Array.from(types).some(typeId => isTabVisibleForType(tab.slug, typeId))
-            : true;
-    }
-    if (visible) {
-        slugs.push(tab.slug);
-    }
-});
-return slugs;
+        if (visible) {
+            slugs.push(tab.slug);
+        }
+    });
+    return slugs;
 }
 async function loadGrades() {
-try {
-    const rows = fromBootstrap('grades') ?? await apiJson('grades');
-    GRADES.clear();
-    (Array.isArray(rows) ? rows : []).forEach(row => {
-        const code = String(row.code || '').trim().toUpperCase();
-        if (!code) {
-            return;
-        }
-        const rawMax = row.max_upgrade_level;
-        GRADES.set(code, {
-            code,
-            name: String(row.name || code),
-            sort_order: Number(row.sort_order || 0),
-            max_upgrade_level: rawMax === null || rawMax === undefined || rawMax === ''
-                ? null
-                : Number(rawMax),
+    try {
+        const rows = fromBootstrap('grades') ?? await apiJson('grades');
+        GRADES.clear();
+        (Array.isArray(rows) ? rows : []).forEach(row => {
+            const code = String(row.code || '').trim().toUpperCase();
+            if (!code) {
+                return;
+            }
+            const rawMax = row.max_upgrade_level;
+            GRADES.set(code, {
+                code,
+                name: String(row.name || code),
+                sort_order: Number(row.sort_order || 0),
+                max_upgrade_level: rawMax === null || rawMax === undefined || rawMax === '' ?
+                    null :
+                    Number(rawMax),
+            });
         });
-    });
-    if (!GRADES.size) {
-        reportLoadError('грейды', new Error('Таблица grades пустая.'));
+        if (!GRADES.size) {
+            reportLoadError('грейды', new Error('Таблица grades пустая.'));
+        }
+    } catch (e) {
+        reportLoadError('грейды', e);
     }
-} catch (e) {
-    reportLoadError('грейды', e);
-}
 }
 
 async function ensureItemsLoaded(ids) {
@@ -1904,14 +2009,14 @@ async function loadFeatures() {
 }
 
 function getDefaultModalTab() {
-const visible = getVisibleTabSlugs();
-if (visible.includes('items')) {
-    return 'items';
-}
-if (visible.length) {
-    return visible[0];
-}
-return TABS[0]?.slug || 'items';
+    const visible = getVisibleTabSlugs();
+    if (visible.includes('items')) {
+        return 'items';
+    }
+    if (visible.length) {
+        return visible[0];
+    }
+    return TABS[0]?.slug || 'items';
 }
 
 function getSavedActiveItem() {
@@ -1919,37 +2024,37 @@ function getSavedActiveItem() {
 }
 
 function ensureValidModalTab() {
-const before = modalTab;
-const visible = getVisibleTabSlugs();
-if (!visible.includes(modalTab)) {
-    modalTab = visible.includes('items') ? 'items' : (visible[0] || modalTab);
-}
-if (!TABS.some(tab => tab.slug === modalTab)) {
-    modalTab = getDefaultModalTab();
-}
-if (tabRequiresItem(modalTab) && !getSavedActiveItem()) {
-    modalTab = visible.includes('items') ? 'items' : (visible[0] || getDefaultModalTab());
-}
-if (before !== modalTab) {
-    renderFeatureCheckboxes();
-}
+    const before = modalTab;
+    const visible = getVisibleTabSlugs();
+    if (!visible.includes(modalTab)) {
+        modalTab = visible.includes('items') ? 'items' : (visible[0] || modalTab);
+    }
+    if (!TABS.some(tab => tab.slug === modalTab)) {
+        modalTab = getDefaultModalTab();
+    }
+    if (tabRequiresItem(modalTab) && !getSavedActiveItem()) {
+        modalTab = visible.includes('items') ? 'items' : (visible[0] || getDefaultModalTab());
+    }
+    if (before !== modalTab) {
+        renderFeatureCheckboxes();
+    }
 }
 
 function updateModalTabs() {
-if (!modalTabs) {
-    return;
-}
-ensureValidModalTab();
-const saved = getSavedActiveItem();
-const canShowCards = !modalOverlay.hidden && Boolean(saved);
-const visible = getVisibleTabSlugs();
-modalTabs.querySelectorAll('button[data-modal-tab]').forEach(button => {
-    const slug = button.dataset.modalTab;
-    const selected = slug === modalTab;
-    button.hidden = !visible.includes(slug);
-    button.setAttribute('aria-selected', selected ? 'true' : 'false');
-    button.disabled = tabRequiresItem(slug) ? !canShowCards : false;
-});
+    if (!modalTabs) {
+        return;
+    }
+    ensureValidModalTab();
+    const saved = getSavedActiveItem();
+    const canShowCards = !modalOverlay.hidden && Boolean(saved);
+    const visible = getVisibleTabSlugs();
+    modalTabs.querySelectorAll('button[data-modal-tab]').forEach(button => {
+        const slug = button.dataset.modalTab;
+        const selected = slug === modalTab;
+        button.hidden = !visible.includes(slug);
+        button.setAttribute('aria-selected', selected ? 'true' : 'false');
+        button.disabled = tabRequiresItem(slug) ? !canShowCards : false;
+    });
 }
 
 function renderTabs() {
@@ -1980,22 +2085,22 @@ async function loadTabs() {
         TABS.length = 0;
         TAB_MAP.clear();
 
-    (Array.isArray(rows) ? rows : []).forEach(r => {
-        const tab = {
-            id: Number(r.id),
-            slug: String(r.slug),
-            name: String(r.name),
-        };
-        TABS.push(tab);
-        TAB_MAP.set(tab.id, tab);
-    });
+        (Array.isArray(rows) ? rows : []).forEach(r => {
+            const tab = {
+                id: Number(r.id),
+                slug: String(r.slug),
+                name: String(r.name),
+            };
+            TABS.push(tab);
+            TAB_MAP.set(tab.id, tab);
+        });
     } catch (e) {
         reportLoadError('вкладки', e);
     }
 
-if (!TABS.length) {
-    reportLoadError('вкладки', new Error('Таблица modal_tabs пустая.'));
-}
+    if (!TABS.length) {
+        reportLoadError('вкладки', new Error('Таблица modal_tabs пустая.'));
+    }
 
     if (!TABS.some(tab => tab.slug === modalTab)) {
         modalTab = getDefaultModalTab();
@@ -2014,13 +2119,13 @@ function renderModalContent(force = false) {
     if (!force && renderedTab === modalTab && signature === renderedSignature) {
         return;
     }
-if (modalTab === 'cards') {
-    renderCardsTab();
-} else if (modalTab === 'stamps') {
-    renderStampsTab();
-} else {
-    renderItems(currentItems);
-}
+    if (modalTab === 'cards') {
+        renderCardsTab();
+    } else if (modalTab === 'stamps') {
+        renderStampsTab();
+    } else {
+        renderItems(currentItems);
+    }
 }
 
 function getMaxDefinedUpgrade() {
@@ -2046,16 +2151,16 @@ function getUpgradePercent(upgradeLevel, type) {
 }
 
 function getMaxUpgradeForGrade(grade) {
-const definedMax = getMaxDefinedUpgrade();
-const key = String(grade || '').trim().toUpperCase();
-if (!key) {
-    return 0;
-}
-const row = GRADES.get(key);
-if (!row || row.max_upgrade_level === null) {
-    return definedMax;
-}
-return Math.max(0, Math.min(Number(row.max_upgrade_level || 0), definedMax));
+    const definedMax = getMaxDefinedUpgrade();
+    const key = String(grade || '').trim().toUpperCase();
+    if (!key) {
+        return 0;
+    }
+    const row = GRADES.get(key);
+    if (!row || row.max_upgrade_level === null) {
+        return definedMax;
+    }
+    return Math.max(0, Math.min(Number(row.max_upgrade_level || 0), definedMax));
 }
 
 function normalizeUpgradeForItem(item, value) {
@@ -2163,7 +2268,7 @@ function loadEquipment() {
 }
 
 function persistEquipment() {
-    localStorage.setItem(EQUIPMENT_STORAGE_KEY, JSON.stringify(equipment));
+    storageSet(EQUIPMENT_STORAGE_KEY, JSON.stringify(equipment));
 }
 
 function saveEquipment() {
@@ -2180,26 +2285,26 @@ function loadFeatureCheckboxIds() {
 }
 
 function saveFeatureCheckboxIds() {
-    localStorage.setItem(
+    storageSet(
         FEATURE_CHECKBOXES_KEY,
         JSON.stringify([...enabledFeatureCheckboxIds])
     );
 }
 
 function setLevelRange(min, max) {
-const lo = Math.max(1, Number(min) || 1);
-const hi = Math.max(lo, Math.min(settingInt('max_character_level', 65), Number(max) || lo));
-const current = Number(level.value);
-const next = Number.isFinite(current) ? Math.min(hi, Math.max(lo, current)) : lo;
-level.min = String(lo);
-level.max = String(hi);
-if (level.tagName === 'SELECT') {
-    level.textContent = '';
-    for (let i = lo; i <= hi; i++) {
-        level.appendChild(new Option(String(i), String(i)));
+    const lo = Math.max(1, Number(min) || 1);
+    const hi = Math.max(lo, Math.min(settingInt('max_character_level', 65), Number(max) || lo));
+    const current = Number(level.value);
+    const next = Number.isFinite(current) ? Math.min(hi, Math.max(lo, current)) : lo;
+    level.min = String(lo);
+    level.max = String(hi);
+    if (level.tagName === 'SELECT') {
+        level.textContent = '';
+        for (let i = lo; i <= hi; i++) {
+            level.appendChild(new Option(String(i), String(i)));
+        }
     }
-}
-level.value = String(next);
+    level.value = String(next);
 }
 
 function buildInfo(rows) {
@@ -2468,9 +2573,9 @@ function applyRuleValidation() {
         let guard = 0;
         do {
             changed = false;
-        for (const slot of getSlotNumbers()) {
-            const slotKey = String(slot);
-            const item = equipment[slotKey];
+            for (const slot of getSlotNumbers()) {
+                const slotKey = String(slot);
+                const item = equipment[slotKey];
                 if (isSlotHidden(slot)) {
                     if (item) {
                         delete equipment[slotKey];
@@ -2491,6 +2596,9 @@ function applyRuleValidation() {
                 dirty = true;
             }
         } while (changed && ++guard < 32);
+        if (changed) {
+            console.warn('Правила ячеек не сошлись за 32 итерации — возможен цикл зависимостей.');
+        }
     } finally {
         isApplyingRules = false;
     }
@@ -2503,8 +2611,8 @@ function applyRuleValidation() {
 }
 
 function updateSlotLocks() {
-lockedSlots = new Set();
-for (const slot of getSlotNumbers()) {
+    lockedSlots = new Set();
+    for (const slot of getSlotNumbers()) {
         const context = getSlotRuleContext(slot);
 
         if (context.locked) {
@@ -2516,21 +2624,21 @@ for (const slot of getSlotNumbers()) {
 }
 
 function updateSlotTitle(slotEl) {
-const saved = equipment[slotEl.dataset.slot];
-if (!saved) {
-    slotEl.title = getSlotName(slotEl.dataset.slot);
-    return;
-}
-const parts = [
-    getSlotName(slotEl.dataset.slot),
-    saved.name,
-];
-if (saved.grade) {
-    parts.push('грейд ' + getGradeName(saved.grade));
-}
-if (Number(saved.required_level || 0) > 0) {
-    parts.push('ур. ' + Number(saved.required_level));
-}
+    const saved = equipment[slotEl.dataset.slot];
+    if (!saved) {
+        slotEl.title = getSlotName(slotEl.dataset.slot);
+        return;
+    }
+    const parts = [
+        getSlotName(slotEl.dataset.slot),
+        saved.name,
+    ];
+    if (saved.grade) {
+        parts.push('грейд ' + getGradeName(saved.grade));
+    }
+    if (Number(saved.required_level || 0) > 0) {
+        parts.push('ур. ' + Number(saved.required_level));
+    }
 
     if (Number(saved.can_upgrade || 0) === 1 && Number(saved.upgrade || 0) > 0) {
         parts.push('улучшение +' + Number(saved.upgrade || 0));
@@ -2584,7 +2692,7 @@ async function validateEquipment() {
     }
     const signal = beginRequest('validate');
     try {
-        const res = await fetch(API + '?action=validate_equipment', {
+        const res = await fetchWithTimeout(API + '?action=validate_equipment', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -2597,11 +2705,21 @@ async function validateEquipment() {
             }),
             signal,
         });
-        if (!res.ok) {
-            throw new Error('HTTP ' + res.status);
+        const text = await res.text();
+        let data = null;
+        let parseFailed = false;
+        try {
+            data = text ? JSON.parse(text) : null;
+        } catch (e) {
+            parseFailed = true;
         }
-        const data = await res.json();
-        if (data.error) {
+        if (!res.ok) {
+            throw new Error(data && data.error ? data.error : 'HTTP ' + res.status);
+        }
+        if (parseFailed) {
+            throw new Error('Некорректный JSON в ответе сервера.');
+        }
+        if (data && data.error) {
             throw new Error(data.error);
         }
         let changed = false;
@@ -2675,13 +2793,13 @@ function onLevelChange() {
 }
 
 function openModal(slotNumber) {
-activeSlot = Number(slotNumber);
-if (lockedSlots.has(String(activeSlot)) || isSlotHidden(activeSlot)) {
-    return;
-}
-if (!getVisibleTabSlugs().length) {
-    return;
-}
+    activeSlot = Number(slotNumber);
+    if (lockedSlots.has(String(activeSlot)) || isSlotHidden(activeSlot)) {
+        return;
+    }
+    if (!getVisibleTabSlugs().length) {
+        return;
+    }
 
     currentItems = [];
 
@@ -2708,11 +2826,11 @@ if (!getVisibleTabSlugs().length) {
 function closeModal() {
     abortRequest('items');
     abortRequest('cards');
-abortRequest('item_cards');
-abortRequest('item_stamp');
-itemsRequestToken++;
-cardsViewToken++;
-stampsViewToken++;
+    abortRequest('item_cards');
+    abortRequest('item_stamp');
+    itemsRequestToken++;
+    cardsViewToken++;
+    stampsViewToken++;
     invalidateRender();
     modalOverlay.hidden = true;
     activeSlot = null;
@@ -2773,9 +2891,9 @@ async function saveItem(item) {
         type: item.type_name,
         type_id: Number(item.item_type_id),
         grade: item.grade,
-     required_level: Number(item.required_level || 0),
-     internal_level: Number(item.internal_level || 0),
-     sockets: Number(item.sockets || 0),
+        required_level: Number(item.required_level || 0),
+        internal_level: Number(item.internal_level || 0),
+        sockets: Number(item.sockets || 0),
         can_upgrade: Number(item.can_upgrade || 0),
         upgrade: upgrade,
         equipped_at: Date.now(),
@@ -2786,7 +2904,9 @@ async function saveItem(item) {
     // Переносим карты и печать, выбранные для предыдущего предмета в этой ячейке.
     if (saved) {
         if (saved.user_cards && typeof saved.user_cards === 'object') {
-            equipment[slotKey].user_cards = { ...saved.user_cards };
+            equipment[slotKey].user_cards = {
+                ...saved.user_cards
+            };
         }
         if (Object.prototype.hasOwnProperty.call(saved, 'user_stamp')) {
             equipment[slotKey].user_stamp = saved.user_stamp;
@@ -2804,13 +2924,13 @@ async function saveItem(item) {
     ensureValidModalTab();
     updateModalTabs();
 
- if (modalTab === 'cards') {
-     await refreshCardsView(true);
- } else if (modalTab === 'stamps') {
-     await refreshStampsView(true);
- } else {
-     renderModalContent();
- }
+    if (modalTab === 'cards') {
+        await refreshCardsView(true);
+    } else if (modalTab === 'stamps') {
+        await refreshStampsView(true);
+    } else {
+        renderModalContent();
+    }
 }
 
 let itemsRequestToken = 0;
@@ -2857,12 +2977,12 @@ async function loadItems() {
         const saved = equipment[String(slot)];
         modalUpgrade = saved ? Number(saved.upgrade || 0) : 0;
         invalidateRender();
-    renderItems(items);
-    if (modalTab === 'cards') {
-        await refreshCardsView(true);
-    } else if (modalTab === 'stamps') {
-        await refreshStampsView(true);
-    }
+        renderItems(items);
+        if (modalTab === 'cards') {
+            await refreshCardsView(true);
+        } else if (modalTab === 'stamps') {
+            await refreshStampsView(true);
+        }
     } catch (e) {
         if (isAbortError(e) || token !== itemsRequestToken) {
             return;
@@ -2920,41 +3040,45 @@ function getItemSearchUpgradeLevel(item) {
 }
 
 function getItemSearchText(item) {
-const upgradeLevel = getItemSearchUpgradeLevel(item);
-const baseNames = [];
-BASE_STATS.forEach(def => {
-    if (!getBaseStatDisplay(item, def, upgradeLevel)) {
-        return;
-    }
-    baseNames.push(def.name_ru);
-    if (def.alias) {
-        baseNames.push(def.alias);
-    }
-});
-return [
-item.name || '',
-...baseNames,
-...getItemSearchableStatNames(item),
-].join(' ').toLowerCase();
+    const upgradeLevel = getItemSearchUpgradeLevel(item);
+    const baseNames = [];
+    BASE_STATS.forEach(def => {
+        if (!getBaseStatDisplay(item, def, upgradeLevel)) {
+            return;
+        }
+        baseNames.push(def.name_ru);
+        if (def.alias) {
+            baseNames.push(def.alias);
+        }
+    });
+    return [
+        item.name || '',
+        ...baseNames,
+        ...getItemSearchableStatNames(item),
+    ].join(' ').toLowerCase();
 }
 
 function getItemSearchStats(item) {
-const upgradeLevel = getItemSearchUpgradeLevel(item);
-const stats = [];
-BASE_STATS.forEach(def => {
-    const display = getBaseStatDisplay(item, def, upgradeLevel);
-    if (!display || display.numeric === undefined || display.numeric === null) {
-        return;
-    }
-    const names = [def.name_ru, def.alias]
-        .filter(Boolean)
-        .map(name => String(name).toLowerCase());
-    if (!names.length) {
-        return;
-    }
-    stats.push({ names, value: Number(display.numeric), valueMax: null });
-});
-const context = {
+    const upgradeLevel = getItemSearchUpgradeLevel(item);
+    const stats = [];
+    BASE_STATS.forEach(def => {
+        const display = getBaseStatDisplay(item, def, upgradeLevel);
+        if (!display || display.numeric === undefined || display.numeric === null) {
+            return;
+        }
+        const names = [def.name_ru, def.alias]
+            .filter(Boolean)
+            .map(name => String(name).toLowerCase());
+        if (!names.length) {
+            return;
+        }
+        stats.push({
+            names,
+            value: Number(display.numeric),
+            valueMax: null
+        });
+    });
+    const context = {
         kind: 'item',
         tab: 'items',
         itemTypeId: Number(item.item_type_id || 0),
@@ -3174,16 +3298,16 @@ function createItemCard(item) {
         });
     }
 
-const levelWrap = card.querySelector('.item-required-level');
-const gradeWrap = card.querySelector('.item-grade');
-if (levelWrap) {
-    levelWrap.hidden = !(Number(item.required_level || 0) > 0);
-    levelWrap.querySelector('.item-footer-value').textContent = item.required_level ?? '';
-}
-if (gradeWrap) {
-    gradeWrap.hidden = !item.grade;
-    gradeWrap.querySelector('.item-footer-value').textContent = item.grade ? getGradeName(item.grade) : '';
-}
+    const levelWrap = card.querySelector('.item-required-level');
+    const gradeWrap = card.querySelector('.item-grade');
+    if (levelWrap) {
+        levelWrap.hidden = !(Number(item.required_level || 0) > 0);
+        levelWrap.querySelector('.item-footer-value').textContent = item.required_level ?? '';
+    }
+    if (gradeWrap) {
+        gradeWrap.hidden = !item.grade;
+        gradeWrap.querySelector('.item-footer-value').textContent = item.grade ? getGradeName(item.grade) : '';
+    }
 
     if (isSelected) {
         card.classList.add('selected');
@@ -3200,202 +3324,224 @@ if (gradeWrap) {
 
 const SLOTS = new Map();
 const SLOT_COLUMNS = [];
+
 function getSlotNumbers() {
-return Array.from(SLOTS.keys()).sort((a, b) => a - b);
+    return Array.from(SLOTS.keys()).sort((a, b) => a - b);
 }
+
 function getSlotName(slotNumber) {
-const slot = SLOTS.get(Number(slotNumber || 0));
-return slot && slot.name ? slot.name : 'Ячейка ' + Number(slotNumber || 0);
+    const slot = SLOTS.get(Number(slotNumber || 0));
+    return slot && slot.name ? slot.name : 'Ячейка ' + Number(slotNumber || 0);
 }
 async function loadSlots() {
-try {
-    const data = fromBootstrap('slots') ?? await apiJson('slots');
-    SLOTS.clear();
-    SLOT_COLUMNS.length = 0;
-    (Array.isArray(data && data.columns) ? data.columns : []).forEach(row => {
-        const no = Number(row.column_no || 0);
-        if (!no) {
-            return;
-        }
-        SLOT_COLUMNS.push({
-            column_no: no,
-            name: String(row.name || ''),
-            align: String(row.align || 'left'),
-            sort_order: Number(row.sort_order || 0),
+    try {
+        const data = fromBootstrap('slots') ?? await apiJson('slots');
+        SLOTS.clear();
+        SLOT_COLUMNS.length = 0;
+        (Array.isArray(data && data.columns) ? data.columns : []).forEach(row => {
+            const no = Number(row.column_no || 0);
+            if (!no) {
+                return;
+            }
+            SLOT_COLUMNS.push({
+                column_no: no,
+                name: String(row.name || ''),
+                align: String(row.align || 'left'),
+                sort_order: Number(row.sort_order || 0),
+            });
         });
-    });
-    (Array.isArray(data && data.slots) ? data.slots : []).forEach(row => {
-        const no = Number(row.slot_number || 0);
-        if (!no) {
-            return;
-        }
-        const rawPair = row.pair_group;
-        SLOTS.set(no, {
-            slot_number: no,
-            name: String(row.name || ('Ячейка ' + no)),
-            column_no: Number(row.column_no || 0),
-            pair_group: rawPair === null || rawPair === undefined || rawPair === ''
-                ? null
-                : Number(rawPair),
-            sort_order: Number(row.sort_order || 0),
+        (Array.isArray(data && data.slots) ? data.slots : []).forEach(row => {
+            const no = Number(row.slot_number || 0);
+            if (!no) {
+                return;
+            }
+            const rawPair = row.pair_group;
+            SLOTS.set(no, {
+                slot_number: no,
+                name: String(row.name || ('Ячейка ' + no)),
+                column_no: Number(row.column_no || 0),
+                pair_group: rawPair === null || rawPair === undefined || rawPair === '' ?
+                    null :
+                    Number(rawPair),
+                sort_order: Number(row.sort_order || 0),
+            });
         });
-    });
-    if (!SLOTS.size) {
-        reportLoadError('ячейки', new Error('Таблица slots пустая.'));
+        if (!SLOTS.size) {
+            reportLoadError('ячейки', new Error('Таблица slots пустая.'));
+        }
+    } catch (e) {
+        reportLoadError('ячейки', e);
     }
-} catch (e) {
-    reportLoadError('ячейки', e);
 }
-}
+
 function createSlotElement(slot) {
-const el = document.createElement('button');
-el.type = 'button';
-el.className = 'slot';
-el.dataset.slot = String(slot.slot_number);
-el.title = slot.name;
-el.setAttribute('aria-label', slot.name);
-const number = document.createElement('span');
-number.className = 'slot-number';
-number.textContent = String(slot.slot_number);
-const icon = document.createElement('img');
-icon.className = 'slot-icon';
-icon.hidden = true;
-icon.alt = '';
-el.appendChild(number);
-el.appendChild(icon);
-el.addEventListener('click', () => {
-    if (el.classList.contains('locked') || el.hidden) {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'slot';
+    el.dataset.slot = String(slot.slot_number);
+    el.title = slot.name;
+    el.setAttribute('aria-label', slot.name);
+    const number = document.createElement('span');
+    number.className = 'slot-number';
+    number.textContent = String(slot.slot_number);
+    const icon = document.createElement('img');
+    icon.className = 'slot-icon';
+    icon.hidden = true;
+    icon.alt = '';
+    el.appendChild(number);
+    el.appendChild(icon);
+    el.addEventListener('click', () => {
+        if (el.classList.contains('locked') || el.hidden) {
+            return;
+        }
+        openModal(slot.slot_number);
+    });
+    return el;
+}
+
+function renderSlots() {
+    const container = document.querySelector('.slots');
+    if (!container) {
         return;
     }
-    openModal(slot.slot_number);
-});
-return el;
-}
-function renderSlots() {
-const container = document.querySelector('.slots');
-if (!container) {
-    return;
-}
-container.textContent = '';
-const byColumn = new Map();
-Array.from(SLOTS.values())
-    .sort((a, b) => a.sort_order - b.sort_order || a.slot_number - b.slot_number)
-    .forEach(slot => {
-        if (!byColumn.has(slot.column_no)) {
-            byColumn.set(slot.column_no, []);
-        }
-        byColumn.get(slot.column_no).push(slot);
-    });
-SLOT_COLUMNS
-    .slice()
-    .sort((a, b) => a.sort_order - b.sort_order || a.column_no - b.column_no)
-    .forEach(column => {
-        const list = byColumn.get(column.column_no) || [];
-        if (!list.length) {
-            return;
-        }
-        const col = document.createElement('div');
-        col.className = 'slot-col' + (column.align === 'right' ? ' right-col' : '');
-        let index = 0;
-        while (index < list.length) {
-            const group = list[index].pair_group;
-            if (group === null) {
-                col.appendChild(createSlotElement(list[index]));
-                index++;
-                continue;
+    container.textContent = '';
+    const byColumn = new Map();
+    Array.from(SLOTS.values())
+        .sort((a, b) => a.sort_order - b.sort_order || a.slot_number - b.slot_number)
+        .forEach(slot => {
+            if (!byColumn.has(slot.column_no)) {
+                byColumn.set(slot.column_no, []);
             }
-            const pair = list.slice(index).filter(item => item.pair_group === group);
-            const wrap = document.createElement('div');
-            wrap.className = 'pair';
-            pair.forEach(item => wrap.appendChild(createSlotElement(item)));
-            col.appendChild(wrap);
-            index += pair.length;
-        }
-        container.appendChild(col);
-    });
+            byColumn.get(slot.column_no).push(slot);
+        });
+    SLOT_COLUMNS
+        .slice()
+        .sort((a, b) => a.sort_order - b.sort_order || a.column_no - b.column_no)
+        .forEach(column => {
+            const list = byColumn.get(column.column_no) || [];
+            if (!list.length) {
+                return;
+            }
+            const col = document.createElement('div');
+            col.className = 'slot-col' + (column.align === 'right' ? ' right-col' : '');
+            let index = 0;
+            while (index < list.length) {
+                const group = list[index].pair_group;
+                if (group === null) {
+                    col.appendChild(createSlotElement(list[index]));
+                    index++;
+                    continue;
+                }
+                const pair = list.slice(index).filter(item => item.pair_group === group);
+                const wrap = document.createElement('div');
+                wrap.className = 'pair';
+                pair.forEach(item => wrap.appendChild(createSlotElement(item)));
+                col.appendChild(wrap);
+                index += pair.length;
+            }
+            container.appendChild(col);
+        });
 }
 const BASE_STATS = [];
+
 function applyBaseStats(rows) {
-BASE_STATS.length = 0;
-(Array.isArray(rows) ? rows : []).forEach(row => {
-    const field = String(row.base_field || '').trim();
-    const format = String(row.base_format || '').trim();
-    if (!field || !format) {
-        return;
-    }
-    BASE_STATS.push({
-        id: Number(row.id || 0),
-        name_ru: String(row.name_ru || field),
-        alias: row.alias === null || row.alias === undefined ? '' : String(row.alias),
-        base_field: field,
-        base_format: format,
-        sort_order: Number(row.sort_order || 0),
+    BASE_STATS.length = 0;
+    (Array.isArray(rows) ? rows : []).forEach(row => {
+        const field = String(row.base_field || '').trim();
+        const format = String(row.base_format || '').trim();
+        if (!field || !format) {
+            return;
+        }
+        BASE_STATS.push({
+            id: Number(row.id || 0),
+            name_ru: String(row.name_ru || field),
+            alias: row.alias === null || row.alias === undefined ? '' : String(row.alias),
+            base_field: field,
+            base_format: format,
+            sort_order: Number(row.sort_order || 0),
+        });
     });
-});
 }
 async function loadBaseStats() {
-try {
-    applyBaseStats(fromBootstrap('base_stats') ?? await apiJson('base_stats'));
-    if (!BASE_STATS.length) {
-        reportLoadError('базовые характеристики', new Error('В stats нет записей с is_base = 1.'));
+    try {
+        applyBaseStats(fromBootstrap('base_stats') ?? await apiJson('base_stats'));
+        if (!BASE_STATS.length) {
+            reportLoadError('базовые характеристики', new Error('В stats нет записей с is_base = 1.'));
+        }
+    } catch (e) {
+        reportLoadError('базовые характеристики', e);
     }
-} catch (e) {
-    reportLoadError('базовые характеристики', e);
 }
-}
+
 function getBaseStatDisplay(item, def, upgradeLevel) {
-const format = String(def.base_format || 'plain');
-if (format === 'text') {
-    const text = String(item[def.base_field] ?? '').trim();
-    if (text === '') {
+    const format = String(def.base_format || 'plain');
+    if (format === 'text') {
+        const text = String(item[def.base_field] ?? '').trim();
+        if (text === '') {
+            return null;
+        }
+        const featureId = Number(item.description_feature_id || 0);
+        if (isFeatureVisible(featureId)) {
+            return {
+                value: text,
+                isDescription: true
+            };
+        }
+        return {
+            value: '?',
+            note: reasonFeature(getFeatureDisplayName(featureId))
+        };
+    }
+    const raw = Number(item[def.base_field] ?? 0);
+    if (format === 'dps') {
+        const baseAttack = Number(item.base_attack || 0);
+        const attackPercent = getUpgradePercent(upgradeLevel, 'attack_percent');
+        let dps = raw;
+        if (attackPercent !== 0 && raw !== 0 && baseAttack > 0) {
+            const speed = truncateTo3(1 / (raw / baseAttack));
+            const upgradedAttack = baseAttack * (1 + attackPercent / 100);
+            dps = speed > 0 ? roundUpgradeValue(upgradedAttack / speed) : raw;
+        }
+        return dps !== 0 ? {
+            value: formatNumber(dps),
+            numeric: dps
+        } : null;
+    }
+    if (raw === 0) {
         return null;
     }
-    const featureId = Number(item.description_feature_id || 0);
-    if (isFeatureVisible(featureId)) {
-        return { value: text, isDescription: true };
+    if (format === 'upgrade_attack' || format === 'upgrade_defense') {
+        const percentField = format === 'upgrade_attack' ? 'attack_percent' : 'defense_percent';
+        const add = roundUpgradeValue(raw * getUpgradePercent(upgradeLevel, percentField) / 100);
+        return {
+            value: formatBaseWithUpgrade(raw, add),
+            numeric: raw + add
+        };
     }
-    return { value: '?', note: reasonFeature(getFeatureDisplayName(featureId)) };
+    return {
+        value: formatNumber(raw),
+        numeric: raw
+    };
 }
-const raw = Number(item[def.base_field] ?? 0);
-if (format === 'dps') {
-    const baseAttack = Number(item.base_attack || 0);
-    const attackPercent = getUpgradePercent(upgradeLevel, 'attack_percent');
-    let dps = raw;
-    if (attackPercent !== 0 && raw !== 0 && baseAttack > 0) {
-        const speed = truncateTo3(1 / (raw / baseAttack));
-        const upgradedAttack = baseAttack * (1 + attackPercent / 100);
-        dps = speed > 0 ? roundUpgradeValue(upgradedAttack / speed) : raw;
-    }
-    return dps !== 0 ? { value: formatNumber(dps), numeric: dps } : null;
-}
-if (raw === 0) {
-    return null;
-}
-if (format === 'upgrade_attack' || format === 'upgrade_defense') {
-    const percentField = format === 'upgrade_attack' ? 'attack_percent' : 'defense_percent';
-    const add = roundUpgradeValue(raw * getUpgradePercent(upgradeLevel, percentField) / 100);
-    return { value: formatBaseWithUpgrade(raw, add), numeric: raw + add };
-}
-return { value: formatNumber(raw), numeric: raw };
-}
+
 function getItemStats(item, upgradeLevel = null) {
-const stats = [];
-const resolvedUpgradeLevel = upgradeLevel === null || upgradeLevel === undefined
-     ? getUpgradeLevelForItem(item)
-     : Number(upgradeLevel || 0);
- BASE_STATS.forEach(def => {
-     const display = getBaseStatDisplay(item, def, resolvedUpgradeLevel);
-     if (!display) {
-         return;
-     }
-     stats.push({
-         label: def.name_ru,
-         value: display.value,
-         isDescription: Boolean(display.isDescription),
-         note: display.note || '',
-     });
- });
- const context = {
+    const stats = [];
+    const resolvedUpgradeLevel = upgradeLevel === null || upgradeLevel === undefined ?
+        getUpgradeLevelForItem(item) :
+        Number(upgradeLevel || 0);
+    BASE_STATS.forEach(def => {
+        const display = getBaseStatDisplay(item, def, resolvedUpgradeLevel);
+        if (!display) {
+            return;
+        }
+        stats.push({
+            label: def.name_ru,
+            value: display.value,
+            isDescription: Boolean(display.isDescription),
+            note: display.note || '',
+        });
+    });
+    const context = {
         kind: 'item',
         itemTypeId: Number(item.item_type_id || 0),
         upgradeLevel: resolvedUpgradeLevel,
@@ -3616,10 +3762,10 @@ function isCardAllowedForItemGrade(card, grade) {
         return true;
     }
 
-const itemGrade = String(grade || '').trim().toUpperCase();
-if (!itemGrade) {
-    return false;
-}
+    const itemGrade = String(grade || '').trim().toUpperCase();
+    if (!itemGrade) {
+        return false;
+    }
 
     return allowed
         .map(value => String(value || '').trim().toUpperCase())
@@ -4155,6 +4301,7 @@ function getStampState() {
         serverVariant: server ? server.variant : null,
     };
 }
+
 function getStampContext() {
     const saved = getSavedActiveItem();
     const hostItem = saved ? getCalcItemForSavedItem(saved) : null;
@@ -4166,6 +4313,7 @@ function getStampContext() {
         hostItemStateId: hostItem ? (hostItem.state_id ?? null) : null,
     };
 }
+
 function getStampStats(variant, context, stateReason = '') {
     const stats = [];
     const resolveContext = {
@@ -4178,8 +4326,8 @@ function getStampStats(variant, context, stateReason = '') {
     };
     (variant.bonuses || []).forEach(bonus => {
         if (Number(bonus.quality_value || 0) === 0) {
-    return;
-}
+            return;
+        }
         const resolved = resolveBonusContext(bonus, resolveContext);
         if (resolved.active) {
             stats.push({
@@ -4201,6 +4349,7 @@ function getStampStats(variant, context, stateReason = '') {
     prependStateNotice(stats, stateReason);
     return stats;
 }
+
 function getStampSearchText(variant) {
     return [
         variant.name || '',
@@ -4209,6 +4358,7 @@ function getStampSearchText(variant) {
         ...(variant.bonuses || []).map(bonus => bonus.stat_alias),
     ].filter(Boolean).join(' ').toLowerCase();
 }
+
 function getStampSearchStats(variant) {
     const context = getStampContext();
     const resolveContext = {
@@ -4222,15 +4372,19 @@ function getStampSearchStats(variant) {
     const stats = [];
     (variant.bonuses || []).forEach(bonus => {
         if (Number(bonus.quality_value || 0) === 0) {
-    return;
-}
+            return;
+        }
         const resolved = resolveBonusContext(bonus, resolveContext);
         if (!resolved.active) {
             return;
         }
         const names = [bonus.name_ru, bonus.stat_alias].filter(Boolean).map(name => String(name).toLowerCase());
         if (names.length) {
-            stats.push({ names, value: Number(resolved.value || 0), valueMax: null });
+            stats.push({
+                names,
+                value: Number(resolved.value || 0),
+                valueMax: null
+            });
         }
     });
     return stats;
@@ -4264,6 +4418,7 @@ function getStampGroupsForContext() {
     list.sort((a, b) => a.sort_order - b.sort_order || a.id - b.id);
     return list;
 }
+
 function getStampGroupColors(groups) {
     const colors = new Map();
     groups.forEach(group => (group.variants || []).forEach(variant => {
@@ -4278,16 +4433,19 @@ function getStampGroupColors(groups) {
     }));
     return Array.from(colors.values()).sort((a, b) => a.sort_order - b.sort_order || a.id - b.id);
 }
+
 function findStampVariantByColor(group, colorId) {
     const id = Number(colorId || 0);
     return (group.variants || []).find(variant => Number(variant.color_id) === id) || null;
 }
+
 function resolveStampGroupVariant(group, state) {
     if (state.variant && Number(state.variant.stamp_id) === group.id) {
         return getFullStampVariant(state.variant.id, state.variant) || group.variants[0];
     }
     return findStampVariantByColor(group, stampColorId) || group.variants[0];
 }
+
 function normalizeStampColorId(groups, state) {
     if (state.variant) {
         stampColorId = Number(state.variant.color_id || 0) || null;
@@ -4302,6 +4460,7 @@ function normalizeStampColorId(groups, state) {
         stampColorId = colors[0].id;
     }
 }
+
 function renderStampColorSelect(groups, state) {
     if (!stampColorSelect || !stampColorField) {
         return;
@@ -4315,10 +4474,14 @@ function renderStampColorSelect(groups, state) {
     stampColorField.hidden = false;
     let colors;
     if (state.locked) {
-        colors = state.variant ? getStampGroupColors([{ variants: [state.variant] }]) : [];
+        colors = state.variant ? getStampGroupColors([{
+            variants: [state.variant]
+        }]) : [];
     } else if (state.variant) {
         const group = groups.find(g => g.id === Number(state.variant.stamp_id || 0));
-        colors = group ? getStampGroupColors([group]) : getStampGroupColors([{ variants: [state.variant] }]);
+        colors = group ? getStampGroupColors([group]) : getStampGroupColors([{
+            variants: [state.variant]
+        }]);
     } else {
         colors = getStampGroupColors(groups);
     }
@@ -4331,6 +4494,7 @@ function renderStampColorSelect(groups, state) {
     stampColorSelect.value = stampColorId ? String(stampColorId) : '';
     stampColorSelect.disabled = state.locked || colors.length < 2;
 }
+
 function filterStampGroupsBySearch(groups, state) {
     const parsed = parseSearchQuery(searchInput.value);
     if (!parsed.terms.length) {
@@ -4341,6 +4505,7 @@ function filterStampGroupsBySearch(groups, state) {
         return searchMatchesTerms(getStampSearchText(variant), getStampSearchStats(variant), parsed);
     });
 }
+
 function createStampCard(variant, options = {}) {
     const template = document.getElementById('item-card-template');
     const cardEl = template.content.firstElementChild.cloneNode(true);
@@ -4363,9 +4528,9 @@ function createStampCard(variant, options = {}) {
     const context = getStampContext();
     let stateReason = '';
     if (!context.hostItemActive) {
-        stateReason = context.hostItemStateId
-            ? getStateInactiveReason(context.hostItemStateId)
-            : 'Не участвует в расчётах: предмет не активен';
+        stateReason = context.hostItemStateId ?
+            getStateInactiveReason(context.hostItemStateId) :
+            'Не участвует в расчётах: предмет не активен';
     }
     const stats = getStampStats(variant, context, stateReason);
     if (!stats.length) {
@@ -4406,6 +4571,7 @@ function createStampCard(variant, options = {}) {
     }
     return cardEl;
 }
+
 function renderStampPanel() {
     const saved = getSavedActiveItem();
     if (modalOverlay.hidden || modalTab !== 'stamps' || !saved) {
@@ -4449,9 +4615,9 @@ function renderStampPanel() {
     title.textContent = 'Печать';
     const value = document.createElement('span');
     value.className = 'socket-card';
-    value.textContent = state.variant
-        ? state.variant.name + ' · ' + (state.variant.color_name || '')
-        : 'Не наложена';
+    value.textContent = state.variant ?
+        state.variant.name + ' · ' + (state.variant.color_name || '') :
+        'Не наложена';
     text.appendChild(title);
     text.appendChild(value);
     main.appendChild(text);
@@ -4470,6 +4636,7 @@ function renderStampPanel() {
     }
     modalSockets.appendChild(chip);
 }
+
 function renderStampsTab() {
     modalCenter.innerHTML = '';
     const saved = getSavedActiveItem();
@@ -4492,7 +4659,10 @@ function renderStampsTab() {
         if (state.variant) {
             const grid = document.createElement('div');
             grid.className = 'item-grid';
-            grid.appendChild(createStampCard(state.variant, { selected: true, selectable: false }));
+            grid.appendChild(createStampCard(state.variant, {
+                selected: true,
+                selectable: false
+            }));
             modalCenter.appendChild(grid);
         } else {
             const empty = document.createElement('div');
@@ -4508,9 +4678,9 @@ function renderStampsTab() {
     if (!filtered.length) {
         const empty = document.createElement('div');
         empty.className = 'empty';
-        empty.textContent = groups.length
-            ? 'Нет печатей по запросу.'
-            : 'Нет печатей, доступных для этого предмета.';
+        empty.textContent = groups.length ?
+            'Нет печатей по запросу.' :
+            'Нет печатей, доступных для этого предмета.';
         modalCenter.appendChild(empty);
         renderSockets();
         updateModalTabs();
@@ -4532,6 +4702,7 @@ function renderStampsTab() {
     updateModalTabs();
     scrollSelectedIntoView();
 }
+
 function loadStampsForItemType(itemTypeId) {
     if (!itemTypeId) {
         currentStampsAll = [];
@@ -4561,7 +4732,9 @@ async function loadItemStampForItem(itemId, force = false) {
     }
     const signal = beginRequest('item_stamp');
     try {
-        const data = await apiJson('item_stamps', { item_id: String(itemId) }, signal);
+        const data = await apiJson('item_stamps', {
+            item_id: String(itemId)
+        }, signal);
         if (data.variant) {
             markStampVariantFull(data.variant);
         }
@@ -4609,7 +4782,10 @@ async function refreshStampsView(force = false) {
     }
     const slot = activeSlot;
     try {
-        itemStampState = { ...itemStampState, loading: true };
+        itemStampState = {
+            ...itemStampState,
+            loading: true
+        };
         renderSockets();
         modalCenter.textContent = 'Загрузка...';
         loadStampsForItemType(itemTypeId);
@@ -4618,18 +4794,27 @@ async function refreshStampsView(force = false) {
             return;
         }
         if (modalOverlay.hidden || activeSlot !== slot || modalTab !== 'stamps') {
-            itemStampState = { ...itemStampState, loading: false };
+            itemStampState = {
+                ...itemStampState,
+                loading: false
+            };
             invalidateRender();
             return;
         }
-        itemStampState = { ...itemStampState, loading: false };
+        itemStampState = {
+            ...itemStampState,
+            loading: false
+        };
         renderSockets();
         renderStampsTab();
     } catch (e) {
         if (isAbortError(e) || token !== stampsViewToken) {
             return;
         }
-        itemStampState = { ...itemStampState, loading: false };
+        itemStampState = {
+            ...itemStampState,
+            loading: false
+        };
         if (modalOverlay.hidden || activeSlot !== slot || modalTab !== 'stamps') {
             invalidateRender();
             return;
@@ -4640,6 +4825,7 @@ async function refreshStampsView(force = false) {
         updateModalTabs();
     }
 }
+
 function selectStampVariant(variant) {
     const saved = getSavedActiveItem();
     if (!saved) {
@@ -4660,6 +4846,7 @@ function selectStampVariant(variant) {
     renderSockets();
     renderStampsTab();
 }
+
 function removeStamp() {
     const saved = getSavedActiveItem();
     if (!saved) {
@@ -4805,17 +4992,17 @@ function advanceActiveSocketFrom(previousSocket) {
 }
 
 function renderSockets() {
-if (!modalSockets) {
-    return;
-}
-if (modalTab !== 'stamps' && stampColorField) {
-    stampColorField.hidden = true;
-}
-if (modalTab === 'stamps') {
-    renderStampPanel();
-    return;
-}
-const saved = getSavedActiveItem();
+    if (!modalSockets) {
+        return;
+    }
+    if (modalTab !== 'stamps' && stampColorField) {
+        stampColorField.hidden = true;
+    }
+    if (modalTab === 'stamps') {
+        renderStampPanel();
+        return;
+    }
+    const saved = getSavedActiveItem();
 
     if (modalOverlay.hidden || modalTab !== 'cards' || !saved) {
         modalSockets.hidden = true;
@@ -5089,20 +5276,22 @@ function addHiddenReason(reasons, text) {
 }
 
 function getItemTypeConditionText(conditions, mode) {
-const parts = (Array.isArray(conditions) ? conditions : [])
-    .map(condition => {
-        const name = getItemTypeName(condition.item_type_id);
-        const count = Math.max(1, Number(condition.required_count || 1));
-        if (count > 1) {
-            return name + ' (' + reason('itemCountSuffix', { count }) + ')';
-        }
-        return name;
-    });
-if (parts.length > 1) {
-    return reason(mode === 'any' ? 'conditionsAnyPrefix' : 'conditionsAllPrefix')
-        + ': ' + parts.join(', ');
-}
-return parts.join(', ');
+    const parts = (Array.isArray(conditions) ? conditions : [])
+        .map(condition => {
+            const name = getItemTypeName(condition.item_type_id);
+            const count = Math.max(1, Number(condition.required_count || 1));
+            if (count > 1) {
+                return name + ' (' + reason('itemCountSuffix', {
+                    count
+                }) + ')';
+            }
+            return name;
+        });
+    if (parts.length > 1) {
+        return reason(mode === 'any' ? 'conditionsAnyPrefix' : 'conditionsAllPrefix') +
+            ': ' + parts.join(', ');
+    }
+    return parts.join(', ');
 }
 
 function getMinUpgradeLevelForScaling(bonus) {
@@ -5316,18 +5505,18 @@ function resolveBonus(bonus, context, options = {}) {
         valueMax = numericOrNull(override.value_max);
     }
 
- let factor = 1;
- if (scalingType === 'range') {
-     factor = 1;
-} else if (scalingType === 'stamp_quality') {
-    value = computeStampQualityValue(
-        Number(bonus.quality_value ?? baseValue),
-        Number(context.internalLevel || 0),
-        Number(bonus.stamp_min_coef ?? 1),
-        Number(bonus.stamp_max_coef ?? 1)
-    );
-    factor = 1;
-} else if (scalingType === 'per_level' || scalingType === 'per_every_n_levels') {
+    let factor = 1;
+    if (scalingType === 'range') {
+        factor = 1;
+    } else if (scalingType === 'stamp_quality') {
+        value = computeStampQualityValue(
+            Number(bonus.quality_value ?? baseValue),
+            Number(context.internalLevel || 0),
+            Number(bonus.stamp_min_coef ?? 1),
+            Number(bonus.stamp_max_coef ?? 1)
+        );
+        factor = 1;
+    } else if (scalingType === 'per_level' || scalingType === 'per_every_n_levels') {
         const step = Math.max(1, Number(bonus.scaling_step || 1));
         factor = Math.floor(upgradeLevel / step);
         value = value * factor;
@@ -5393,7 +5582,7 @@ function resolveBonus(bonus, context, options = {}) {
             } else {
                 const factors = sources.map(source => {
                     const sourceId = Number(source.stat_id || 0);
-                    const sourceTotal = Math.max(0, Number(totals.get(sourceId) || 0));
+                    const sourceTotal = Math.round(Math.max(0, Number(totals.get(sourceId) || 0)) * 1e6) / 1e6;
                     const step = Math.max(1, Number(source.step || 1));
 
                     return Math.floor(sourceTotal / step);
@@ -5431,7 +5620,7 @@ function resolveBonus(bonus, context, options = {}) {
             factor = 1;
             addHint(buildStatDependencyReason(bonus));
         } else {
-            const sourceTotal = Math.max(0, Number(totals.get(sourceId) || 0));
+            const sourceTotal = Math.round(Math.max(0, Number(totals.get(sourceId) || 0)) * 1e6) / 1e6;
 
             if (trueValue !== null && sourceTotal >= threshold) {
                 value = trueValue;
@@ -5659,7 +5848,7 @@ function migrateEquipmentUserCardSnapshots() {
     });
 
     if (changed) {
-        localStorage.setItem(EQUIPMENT_STORAGE_KEY, JSON.stringify(equipment));
+        storageSet(EQUIPMENT_STORAGE_KEY, JSON.stringify(equipment));
     }
 }
 /* Удаляем из выбора то, чего больше нет на сервере. Карты в слотах,
@@ -5671,9 +5860,9 @@ function pruneDeletedUserSelections() {
             return;
         }
         const stampValue = savedItem.user_stamp;
-        const stampId = stampValue && typeof stampValue === 'object'
-            ? Number(stampValue.id || 0)
-            : Number(stampValue || 0);
+        const stampId = stampValue && typeof stampValue === 'object' ?
+            Number(stampValue.id || 0) :
+            Number(stampValue || 0);
         if (stampId) {
             const variant = STAMP_VARIANTS.get(stampId);
             if (!variant || !Array.isArray(variant.bonuses)) {
@@ -5681,17 +5870,17 @@ function pruneDeletedUserSelections() {
                 changed = true;
             }
         }
-        const userCards = savedItem.user_cards && typeof savedItem.user_cards === 'object'
-            ? savedItem.user_cards
-            : null;
+        const userCards = savedItem.user_cards && typeof savedItem.user_cards === 'object' ?
+            savedItem.user_cards :
+            null;
         if (!userCards) {
             return;
         }
         Object.keys(userCards).forEach(key => {
             const value = userCards[key];
-            const cardId = value && typeof value === 'object'
-                ? Number(value.id || 0)
-                : Number(value || 0);
+            const cardId = value && typeof value === 'object' ?
+                Number(value.id || 0) :
+                Number(value || 0);
             if (cardId && !FULL_CARD_IDS.has(cardId)) {
                 delete userCards[key];
                 changed = true;
@@ -5709,6 +5898,7 @@ function pruneDeletedUserSelections() {
         invalidateRender();
     }
 }
+
 function getKnownCardIdsForCalc() {
     return new Set(collectActiveEquippedCardIds());
 }
@@ -5847,31 +6037,31 @@ function collectCandidateBonuses(setStates) {
             });
         });
 
-     const stampVariant = getActiveStampForEquippedItem(savedItem);
-     if (stampVariant) {
-         const internalLevel = getStampInternalLevel(item, savedItem);
-         (stampVariant.bonuses || []).forEach(bonus => {
-             candidates.push({
-                 key: 'stamp:' + itemId + ':' + Number(bonus.id || 0),
-                 stat_id: Number(bonus.stat_id || 0),
-                 value_type: String(bonus.value_type || 'flat'),
-                 bonus,
-                 context: {
-                     kind: 'stamp',
-                     tab: 'stamps',
-                     itemTypeId,
-                     upgradeLevel,
-                     internalLevel,
-                     hostItemId: itemId,
-                     stampVariantId: Number(stampVariant.id || 0),
-                     equippedItemTypeCounts,
-                     knownCardIds,
-                 },
-             });
-         });
-     }
-     const socketsCount = Number(item.sockets || savedItem.sockets || 0);
-     for (let socket = 1; socket <= socketsCount; socket++) {
+        const stampVariant = getActiveStampForEquippedItem(savedItem);
+        if (stampVariant) {
+            const internalLevel = getStampInternalLevel(item, savedItem);
+            (stampVariant.bonuses || []).forEach(bonus => {
+                candidates.push({
+                    key: 'stamp:' + itemId + ':' + Number(bonus.id || 0),
+                    stat_id: Number(bonus.stat_id || 0),
+                    value_type: String(bonus.value_type || 'flat'),
+                    bonus,
+                    context: {
+                        kind: 'stamp',
+                        tab: 'stamps',
+                        itemTypeId,
+                        upgradeLevel,
+                        internalLevel,
+                        hostItemId: itemId,
+                        stampVariantId: Number(stampVariant.id || 0),
+                        equippedItemTypeCounts,
+                        knownCardIds,
+                    },
+                });
+            });
+        }
+        const socketsCount = Number(item.sockets || savedItem.sockets || 0);
+        for (let socket = 1; socket <= socketsCount; socket++) {
             const card = getActiveCardForEquippedItem(savedItem, socket);
 
             if (!card || !isCardStateActive(card)) {
@@ -6021,8 +6211,10 @@ function calculateEquipmentStatTotals() {
 
         previousSignature = signature;
         totals = nextTotals;
+        if (iteration === maxIterations - 1) {
+            console.warn('Пересчёт характеристик не сошёлся за ' + maxIterations + ' итераций — возможен цикл зависимостей.');
+        }
     }
-
     CALC_STATE.ready = true;
     CALC_STATE.updatedAt = Date.now();
 
@@ -6044,9 +6236,9 @@ async function refreshEquipmentCalculationData(force = false) {
         const itemIds = getEquippedItemIds();
 
         if (!itemIds.length) {
-         EQUIPMENT_SERVER_CARDS.clear();
-         EQUIPMENT_SERVER_STAMPS.clear();
-         CALC_STATE.totals = new Map();
+            EQUIPMENT_SERVER_CARDS.clear();
+            EQUIPMENT_SERVER_STAMPS.clear();
+            CALC_STATE.totals = new Map();
             CALC_STATE.resolved = new Map();
             CALC_STATE.sets = refreshSetStatesSync();
             CALC_STATE.ready = true;
@@ -6159,14 +6351,14 @@ if (modalTabs) {
         renderFeatureCheckboxes();
         updateModalTabs();
         renderSockets();
-     if (modalTab === 'cards') {
-         await refreshCardsView();
-     } else if (modalTab === 'stamps') {
-         await refreshStampsView();
-     } else {
-         renderSockets();
-         renderModalContent(true);
-     }
+        if (modalTab === 'cards') {
+            await refreshCardsView();
+        } else if (modalTab === 'stamps') {
+            await refreshStampsView();
+        } else {
+            renderSockets();
+            renderModalContent(true);
+        }
     });
 }
 
@@ -6373,7 +6565,7 @@ async function loadClasses() {
 async function init() {
     equipment = loadEquipment();
     enabledFeatureCheckboxIds = loadFeatureCheckboxIds();
-disableUpgradeControl();
+    disableUpgradeControl();
     updateModalTabs();
 
     try {
@@ -6382,14 +6574,17 @@ disableUpgradeControl();
         reportLoadError('справочники', e);
     }
 
-await Promise.all([
-    loadSettings(),
-    loadEnumLabels(),
-    loadBaseStats(),
-    loadSlots(),
-    loadItemTypeTabs(),
-    loadStamps(),
-    (async () => { await loadTabs(); await loadFeatures(); })(),
+    await Promise.all([
+        loadSettings(),
+        loadEnumLabels(),
+        loadBaseStats(),
+        loadSlots(),
+        loadItemTypeTabs(),
+        loadStamps(),
+        (async () => {
+            await loadTabs();
+            await loadFeatures();
+        })(),
         loadReferenceNames(),
         loadCardSets(),
         loadStates(),
@@ -6399,14 +6594,14 @@ await Promise.all([
         loadClasses().catch(e => reportLoadError('классы', e)),
     ]);
 
-BOOTSTRAP_DATA = null;
-currentStateId = normalizeCurrentStateId(localStorage.getItem(CURRENT_STATE_STORAGE_KEY));
-renderGenderSelect();
-renderStateSelect();
-renderFeatureCheckboxes();
-renderSlots();
-initSlotIconErrors();
-initModalA11y();
+    BOOTSTRAP_DATA = null;
+    currentStateId = normalizeCurrentStateId(storageGet(CURRENT_STATE_STORAGE_KEY));
+    renderGenderSelect();
+    renderStateSelect();
+    renderFeatureCheckboxes();
+    renderSlots();
+    initSlotIconErrors();
+    initModalA11y();
 
     if (!restoreCharacterSelection()) {
         showDbError('Не удалось загрузить классы из БД. Запусти MySQL и обнови страницу.');
