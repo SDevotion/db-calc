@@ -3120,22 +3120,14 @@ function getItemSearchStats(item) {
     return stats;
 }
 
-function itemMatchesSearch(item, parsed) {
-    return searchMatchesTerms(
-        getItemSearchText(item),
-        getItemSearchStats(item),
-        parsed
-    );
-}
-
-function filterBySearch(items) {
+function filterBySearch(entries, getText, getStats) {
     const parsed = parseSearchQuery(searchInput.value);
 
     if (!parsed.terms.length) {
-        return items;
+        return entries;
     }
 
-    return items.filter(item => itemMatchesSearch(item, parsed));
+    return entries.filter(entry => searchMatchesTerms(getText(entry), getStats(entry), parsed));
 }
 
 function getItemSearchableStatNames(item) {
@@ -3183,7 +3175,7 @@ function renderItemsInner(items) {
 
     ensureValidModalTab();
 
-    const visibleItems = filterBySearch(ruleVisibleItems);
+    const visibleItems = filterBySearch(ruleVisibleItems, getItemSearchText, getItemSearchStats);
 
     modalCenter.innerHTML = '';
 
@@ -3699,24 +3691,6 @@ function getCardSearchStats(card) {
     return stats;
 }
 
-function cardMatchesSearch(card, parsed) {
-    return searchMatchesTerms(
-        getCardSearchText(card),
-        getCardSearchStats(card),
-        parsed
-    );
-}
-
-function filterCardsBySearch(cards) {
-    const parsed = parseSearchQuery(searchInput.value);
-
-    if (!parsed.terms.length) {
-        return cards;
-    }
-
-    return cards.filter(card => cardMatchesSearch(card, parsed));
-}
-
 function getCardSearchableStatNames(card) {
     const names = [];
 
@@ -4104,7 +4078,7 @@ function renderCardsTabInner() {
             isCardAllowedForItemGrade(card, contextItemGrade)
         ) : [];
 
-    const filteredAvailable = filterCardsBySearch(availableCards);
+    const filteredAvailable = filterBySearch(availableCards, getCardSearchText, getCardSearchStats);
 
     if (!filteredAvailable.length) {
         const empty = document.createElement('div');
@@ -4215,77 +4189,101 @@ async function loadItemCardsForItem(itemId, force = false) {
 }
 
 let cardsViewToken = 0;
-async function refreshCardsView(force = false) {
+async function refreshEntityView(cfg, force = false) {
     ensureValidModalTab();
     updateModalTabs();
-    if (modalTab !== 'cards') {
-        renderSockets();
-        renderModalContent();
+    if (modalTab !== cfg.tab) {
+        cfg.renderOtherTab();
         return;
     }
-    const token = ++cardsViewToken;
+    const token = cfg.bumpToken();
     const saved = getSavedActiveItem();
     if (!saved) {
         resetCardsState();
-        renderCardsTab();
+        cfg.renderTab();
         return;
     }
     const itemId = Number(saved.id);
-    const itemTypeId = Number(saved.type_id || itemCardsState.itemTypeId || 0);
+    const itemTypeId = Number(saved.type_id || cfg.getState().itemTypeId || 0);
     if (!itemId || !itemTypeId) {
-        currentCardsAll = [];
-        cardsItemType = null;
-        activeSocketNumber = null;
-        itemCardsState = emptyItemCardsState();
+        cfg.resetLists();
         renderSockets();
-        renderCardsTab();
+        cfg.renderTab();
         return;
     }
     const slot = activeSlot;
     try {
-        itemCardsState = {
-            ...itemCardsState,
+        cfg.setState({
+            ...cfg.getState(),
             loading: true
-        };
+        });
         renderSockets();
         modalCenter.textContent = 'Загрузка...';
-        await loadCardsForItemType(itemTypeId, force);
-        await loadItemCardsForItem(itemId, force);
-        if (token !== cardsViewToken) {
+        await cfg.load(itemId, itemTypeId, force);
+        if (token !== cfg.getToken()) {
             return;
         }
-        if (modalOverlay.hidden || activeSlot !== slot || modalTab !== 'cards') {
-            itemCardsState = {
-                ...itemCardsState,
+        if (modalOverlay.hidden || activeSlot !== slot || modalTab !== cfg.tab) {
+            cfg.setState({
+                ...cfg.getState(),
                 loading: false
-            };
+            });
             invalidateRender();
             return;
         }
-        itemCardsState = {
-            ...itemCardsState,
+        cfg.setState({
+            ...cfg.getState(),
             loading: false
-        };
-        ensureActiveSocket();
+        });
+        cfg.afterLoad();
         renderSockets();
-        renderCardsTab();
+        cfg.renderTab();
     } catch (e) {
-        if (isAbortError(e) || token !== cardsViewToken) {
+        if (isAbortError(e) || token !== cfg.getToken()) {
             return;
         }
-        itemCardsState = {
-            ...itemCardsState,
+        cfg.setState({
+            ...cfg.getState(),
             loading: false
-        };
-        if (modalOverlay.hidden || activeSlot !== slot || modalTab !== 'cards') {
+        });
+        if (modalOverlay.hidden || activeSlot !== slot || modalTab !== cfg.tab) {
             invalidateRender();
             return;
         }
-        modalCenter.textContent = 'Ошибка загрузки карт: ' + e.message;
-        markRendered('cards');
+        modalCenter.textContent = cfg.errorLabel + e.message;
+        markRendered(cfg.tab);
         renderSockets();
         updateModalTabs();
     }
+}
+
+const cardsViewConfig = {
+    tab: 'cards',
+    errorLabel: 'Ошибка загрузки карт: ',
+    bumpToken: () => ++cardsViewToken,
+    getToken: () => cardsViewToken,
+    getState: () => itemCardsState,
+    setState: state => { itemCardsState = state; },
+    renderTab: renderCardsTab,
+    renderOtherTab: () => {
+        renderSockets();
+        renderModalContent();
+    },
+    resetLists: () => {
+        currentCardsAll = [];
+        cardsItemType = null;
+        activeSocketNumber = null;
+        itemCardsState = emptyItemCardsState();
+    },
+    load: async (itemId, itemTypeId, force) => {
+        await loadCardsForItemType(itemTypeId, force);
+        await loadItemCardsForItem(itemId, force);
+    },
+    afterLoad: () => ensureActiveSocket(),
+};
+
+async function refreshCardsView(force = false) {
+    return refreshEntityView(cardsViewConfig, force);
 }
 
 function getStampState() {
@@ -4756,74 +4754,31 @@ async function loadItemStampForItem(itemId, force = false) {
     }
 }
 let stampsViewToken = 0;
-async function refreshStampsView(force = false) {
-    ensureValidModalTab();
-    updateModalTabs();
-    if (modalTab !== 'stamps') {
+const stampsViewConfig = {
+    tab: 'stamps',
+    errorLabel: 'Ошибка загрузки печатей: ',
+    bumpToken: () => ++stampsViewToken,
+    getToken: () => stampsViewToken,
+    getState: () => itemStampState,
+    setState: state => { itemStampState = state; },
+    renderTab: renderStampsTab,
+    renderOtherTab: () => {
         renderSockets();
-        return;
-    }
-    const token = ++stampsViewToken;
-    const saved = getSavedActiveItem();
-    if (!saved) {
-        resetCardsState();
-        renderStampsTab();
-        return;
-    }
-    const itemId = Number(saved.id);
-    const itemTypeId = Number(saved.type_id || itemStampState.itemTypeId || 0);
-    if (!itemId || !itemTypeId) {
+    },
+    resetLists: () => {
         currentStampsAll = [];
         stampsItemType = null;
         itemStampState = emptyItemStampState();
-        renderSockets();
-        renderStampsTab();
-        return;
-    }
-    const slot = activeSlot;
-    try {
-        itemStampState = {
-            ...itemStampState,
-            loading: true
-        };
-        renderSockets();
-        modalCenter.textContent = 'Загрузка...';
+    },
+    load: async (itemId, itemTypeId, force) => {
         loadStampsForItemType(itemTypeId);
         await loadItemStampForItem(itemId, force);
-        if (token !== stampsViewToken) {
-            return;
-        }
-        if (modalOverlay.hidden || activeSlot !== slot || modalTab !== 'stamps') {
-            itemStampState = {
-                ...itemStampState,
-                loading: false
-            };
-            invalidateRender();
-            return;
-        }
-        itemStampState = {
-            ...itemStampState,
-            loading: false
-        };
-        renderSockets();
-        renderStampsTab();
-    } catch (e) {
-        if (isAbortError(e) || token !== stampsViewToken) {
-            return;
-        }
-        itemStampState = {
-            ...itemStampState,
-            loading: false
-        };
-        if (modalOverlay.hidden || activeSlot !== slot || modalTab !== 'stamps') {
-            invalidateRender();
-            return;
-        }
-        modalCenter.textContent = 'Ошибка загрузки печатей: ' + e.message;
-        markRendered('stamps');
-        renderSockets();
-        updateModalTabs();
-    }
+    },
+    afterLoad: () => {},
+};
+
+async function refreshStampsView(force = false) {
+    return refreshEntityView(stampsViewConfig, force);
 }
 
 function selectStampVariant(variant) {
