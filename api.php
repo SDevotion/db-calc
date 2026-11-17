@@ -47,7 +47,7 @@ function cast_float_or_null($value): ?float
     return (float)$value;
 }
 
-function attach_item_bonus_conditions(PDO $pdo, array &$bonuses): void
+function attach_bonus_conditions(PDO $pdo, array &$bonuses, string $entity, ?callable $setup, callable $enrich): void
 {
     if (!$bonuses) {
         return;
@@ -59,42 +59,38 @@ function attach_item_bonus_conditions(PDO $pdo, array &$bonuses): void
         return;
     }
 
-    $placeholders = in_placeholders($ids);
+    $ph = in_placeholders($ids);
+    $key = $entity . '_bonus_id';
 
-    $classStmt = $pdo->prepare("
-        SELECT item_bonus_id, class_id
-        FROM item_bonus_class_restrictions
-        WHERE item_bonus_id IN ($placeholders)
-        ORDER BY item_bonus_id, class_id
-    ");
-    $classStmt->execute($ids);
-
+    $st = $pdo->prepare("SELECT $key, class_id FROM {$entity}_bonus_class_restrictions WHERE $key IN ($ph) ORDER BY $key, class_id");
+    $st->execute($ids);
     $classMap = [];
-
-    foreach ($classStmt->fetchAll() as $row) {
-        $classMap[(int)$row['item_bonus_id']][] = (int)$row['class_id'];
+    foreach ($st->fetchAll() as $row) {
+        $classMap[(int)$row[$key]][] = (int)$row['class_id'];
     }
 
-    $conditionStmt = $pdo->prepare("
-        SELECT item_bonus_id, item_type_id, required_count
-        FROM item_bonus_item_type_conditions
-        WHERE item_bonus_id IN ($placeholders)
-        ORDER BY item_bonus_id, item_type_id
-    ");
-    $conditionStmt->execute($ids);
-
+    $st = $pdo->prepare("SELECT $key, item_type_id, required_count FROM {$entity}_bonus_item_type_conditions WHERE $key IN ($ph) ORDER BY $key, item_type_id");
+    $st->execute($ids);
     $conditionMap = [];
-
-    foreach ($conditionStmt->fetchAll() as $row) {
-        $conditionMap[(int)$row['item_bonus_id']][] = [
+    foreach ($st->fetchAll() as $row) {
+        $conditionMap[(int)$row[$key]][] = [
             'item_type_id' => (int)$row['item_type_id'],
             'required_count' => (int)$row['required_count'],
         ];
     }
 
-    foreach ($bonuses as &$bonus) {
-        $id = (int)$bonus['id'];
+    $extra = $setup ? $setup($pdo, $ids, $ph) : [];
 
+    foreach ($bonuses as &$bonus) {
+        $enrich($bonus, (int)$bonus['id'], $classMap, $conditionMap, $extra);
+    }
+
+    unset($bonus);
+}
+
+function attach_item_bonus_conditions(PDO $pdo, array &$bonuses): void
+{
+    attach_bonus_conditions($pdo, $bonuses, 'item', null, static function (array &$bonus, int $id, array $classMap, array $conditionMap, array $extra): void {
         $bonus['class_ids'] = $classMap[$id] ?? [];
         $bonus['item_type_conditions'] = $conditionMap[$id] ?? [];
         $bonus['item_type_condition_mode'] = (string)($bonus['item_type_condition_mode'] ?? 'all');
@@ -108,95 +104,52 @@ function attach_item_bonus_conditions(PDO $pdo, array &$bonuses): void
         $bonus['stat_step'] = cast_int_or_null($bonus['stat_step'] ?? null);
         $bonus['stat_threshold'] = cast_int_or_null($bonus['stat_threshold'] ?? null);
         $bonus['stat_value_true'] = cast_float_or_null($bonus['stat_value_true'] ?? null);
-    }
-
-    unset($bonus);
+    });
 }
 
 function attach_card_bonus_conditions(PDO $pdo, array &$bonuses): void
 {
-    if (!$bonuses) {
-        return;
-    }
+    $setup = static function (PDO $pdo, array $ids, string $ph): array {
+        $restrictionStmt = $pdo->prepare("
+            SELECT card_bonus_id, item_type_id
+            FROM card_bonus_item_type_restrictions
+            WHERE card_bonus_id IN ($ph)
+            ORDER BY card_bonus_id, item_type_id
+        ");
+        $restrictionStmt->execute($ids);
 
-    $ids = array_values(array_unique(array_map('intval', array_column($bonuses, 'id'))));
+        $restrictionMap = [];
 
-    if (!$ids) {
-        return;
-    }
+        foreach ($restrictionStmt->fetchAll() as $row) {
+            $restrictionMap[(int)$row['card_bonus_id']][] = (int)$row['item_type_id'];
+        }
 
-    $placeholders = in_placeholders($ids);
+        $sourceStmt = $pdo->prepare("
+            SELECT
+                card_bonus_id,
+                stat_id,
+                step
+            FROM card_bonus_stat_sources
+            WHERE card_bonus_id IN ($ph)
+            ORDER BY sort_order, id
+        ");
+        $sourceStmt->execute($ids);
 
-    $classStmt = $pdo->prepare("
-        SELECT card_bonus_id, class_id
-        FROM card_bonus_class_restrictions
-        WHERE card_bonus_id IN ($placeholders)
-        ORDER BY card_bonus_id, class_id
-    ");
-    $classStmt->execute($ids);
+        $sourceMap = [];
 
-    $classMap = [];
+        foreach ($sourceStmt->fetchAll() as $row) {
+            $sourceMap[(int)$row['card_bonus_id']][] = [
+                'stat_id' => (int)$row['stat_id'],
+                'step'    => max(1, (int)$row['step']),
+            ];
+        }
 
-    foreach ($classStmt->fetchAll() as $row) {
-        $classMap[(int)$row['card_bonus_id']][] = (int)$row['class_id'];
-    }
+        return ['restrictions' => $restrictionMap, 'sources' => $sourceMap];
+    };
 
-    $restrictionStmt = $pdo->prepare("
-        SELECT card_bonus_id, item_type_id
-        FROM card_bonus_item_type_restrictions
-        WHERE card_bonus_id IN ($placeholders)
-        ORDER BY card_bonus_id, item_type_id
-    ");
-    $restrictionStmt->execute($ids);
-
-    $restrictionMap = [];
-
-    foreach ($restrictionStmt->fetchAll() as $row) {
-        $restrictionMap[(int)$row['card_bonus_id']][] = (int)$row['item_type_id'];
-    }
-
-    $conditionStmt = $pdo->prepare("
-        SELECT card_bonus_id, item_type_id, required_count
-        FROM card_bonus_item_type_conditions
-        WHERE card_bonus_id IN ($placeholders)
-        ORDER BY card_bonus_id, item_type_id
-    ");
-    $conditionStmt->execute($ids);
-
-    $conditionMap = [];
-
-    foreach ($conditionStmt->fetchAll() as $row) {
-        $conditionMap[(int)$row['card_bonus_id']][] = [
-            'item_type_id' => (int)$row['item_type_id'],
-            'required_count' => (int)$row['required_count'],
-        ];
-    }
-
-    $sourceStmt = $pdo->prepare("
-        SELECT
-            card_bonus_id,
-            stat_id,
-            step
-        FROM card_bonus_stat_sources
-        WHERE card_bonus_id IN ($placeholders)
-        ORDER BY sort_order, id
-    ");
-    $sourceStmt->execute($ids);
-
-    $sourceMap = [];
-
-    foreach ($sourceStmt->fetchAll() as $row) {
-        $sourceMap[(int)$row['card_bonus_id']][] = [
-            'stat_id' => (int)$row['stat_id'],
-            'step'    => max(1, (int)$row['step']),
-        ];
-    }
-
-    foreach ($bonuses as &$bonus) {
-        $id = (int)$bonus['id'];
-
+    attach_bonus_conditions($pdo, $bonuses, 'card', $setup, static function (array &$bonus, int $id, array $classMap, array $conditionMap, array $extra): void {
         $bonus['class_ids'] = $classMap[$id] ?? [];
-        $bonus['item_type_restrictions'] = $restrictionMap[$id] ?? [];
+        $bonus['item_type_restrictions'] = $extra['restrictions'][$id] ?? [];
         $bonus['item_type_conditions'] = $conditionMap[$id] ?? [];
         $bonus['item_type_condition_mode'] = (string)($bonus['item_type_condition_mode'] ?? 'all');
 
@@ -220,10 +173,8 @@ function attach_card_bonus_conditions(PDO $pdo, array &$bonuses): void
             ? (string)$bonus['stat_condition_mode']
             : 'all';
 
-        $bonus['stat_sources'] = $sourceMap[$id] ?? [];
-    }
-
-    unset($bonus);
+        $bonus['stat_sources'] = $extra['sources'][$id] ?? [];
+    });
 }
 
 function fetch_item_bonuses_grouped(PDO $pdo, array $itemIds): array
@@ -578,34 +529,7 @@ $card['allowed_grades'] = $gradesByCard[$cardId] ?? [];
 
 function attach_stamp_bonus_conditions(PDO $pdo, array &$bonuses): void
 {
-    if (!$bonuses) {
-        return;
-    }
-    $ids = array_values(array_unique(array_map('intval', array_column($bonuses, 'id'))));
-    if (!$ids) {
-        return;
-    }
-    $ph = in_placeholders($ids);
-
-    $st = $pdo->prepare("SELECT stamp_bonus_id, class_id FROM stamp_bonus_class_restrictions WHERE stamp_bonus_id IN ($ph) ORDER BY stamp_bonus_id, class_id");
-    $st->execute($ids);
-    $classMap = [];
-    foreach ($st->fetchAll() as $row) {
-        $classMap[(int)$row['stamp_bonus_id']][] = (int)$row['class_id'];
-    }
-
-    $st = $pdo->prepare("SELECT stamp_bonus_id, item_type_id, required_count FROM stamp_bonus_item_type_conditions WHERE stamp_bonus_id IN ($ph) ORDER BY stamp_bonus_id, item_type_id");
-    $st->execute($ids);
-    $conditionMap = [];
-    foreach ($st->fetchAll() as $row) {
-        $conditionMap[(int)$row['stamp_bonus_id']][] = [
-            'item_type_id' => (int)$row['item_type_id'],
-            'required_count' => (int)$row['required_count'],
-        ];
-    }
-
-    foreach ($bonuses as &$bonus) {
-        $id = (int)$bonus['id'];
+    attach_bonus_conditions($pdo, $bonuses, 'stamp', null, static function (array &$bonus, int $id, array $classMap, array $conditionMap, array $extra): void {
         $bonus['class_ids'] = $classMap[$id] ?? [];
         $bonus['item_type_conditions'] = $conditionMap[$id] ?? [];
         $bonus['item_type_restrictions'] = [];
@@ -620,8 +544,7 @@ function attach_stamp_bonus_conditions(PDO $pdo, array &$bonuses): void
         $bonus['scaling_type'] = 'stamp_quality';
         $bonus['scaling_step'] = 1;
         $bonus['scaling_threshold'] = 0;
-    }
-    unset($bonus);
+    });
 }
 
 function get_stamp_variants_by_ids(PDO $pdo, array $variantIds): array
