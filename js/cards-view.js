@@ -474,6 +474,9 @@ function renderCardsTabInner() {
     scrollSelectedIntoView();
 }
 
+// Карты типа меняются только через админку — кэшируем на сессию страницы.
+const CARDS_BY_TYPE_CACHE = new Map(); // item_type_id -> массив карт
+
 async function loadCardsForItemType(itemTypeId, force = false) {
     if (!itemTypeId) {
         currentCardsAll = [];
@@ -481,6 +484,11 @@ async function loadCardsForItemType(itemTypeId, force = false) {
         return;
     }
     if (!force && cardsItemType === itemTypeId) {
+        return;
+    }
+    if (!force && CARDS_BY_TYPE_CACHE.has(itemTypeId)) {
+        currentCardsAll = CARDS_BY_TYPE_CACHE.get(itemTypeId);
+        cardsItemType = itemTypeId;
         return;
     }
     const signal = beginRequest('cards');
@@ -494,6 +502,7 @@ async function loadCardsForItemType(itemTypeId, force = false) {
         currentCardsAll = data;
         currentCardsAll.forEach(markCardFull);
         cardsItemType = itemTypeId;
+        CARDS_BY_TYPE_CACHE.set(itemTypeId, data);
     } finally {
         endRequest('cards', signal);
     }

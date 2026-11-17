@@ -131,12 +131,25 @@ async function saveItem(item) {
     updateModalTabs();
 
     if (modalTab === 'cards') {
-        await refreshCardsView(true);
+        await refreshCardsView();
     } else if (modalTab === 'stamps') {
-        await refreshStampsView(true);
+        await refreshStampsView();
     } else {
         renderModalContent();
     }
+}
+
+// Список предметов зависит только от slot|gender|class|level.
+// Кэш живёт до перезагрузки страницы — как и bootstrap-справочники.
+const ITEMS_LIST_CACHE = new Map();
+const ITEMS_LIST_CACHE_LIMIT = 50;
+
+function rememberItemsList(key, items) {
+    if (ITEMS_LIST_CACHE.size >= ITEMS_LIST_CACHE_LIMIT) {
+        const oldest = ITEMS_LIST_CACHE.keys().next().value;
+        ITEMS_LIST_CACHE.delete(oldest);
+    }
+    ITEMS_LIST_CACHE.set(key, items);
 }
 
 let itemsRequestToken = 0;
@@ -157,6 +170,20 @@ async function loadItems() {
         modalCenter.textContent = 'Класс не выбран.';
         disableUpgradeControl();
         updateModalTabs();
+        return;
+    }
+    const cacheKey = [slot, character.gender, character.classId, character.level].join('|');
+    const cachedItems = ITEMS_LIST_CACHE.get(cacheKey);
+    if (cachedItems) {
+        const saved = equipment[String(slot)];
+        modalUpgrade = saved ? Number(saved.upgrade || 0) : 0;
+        invalidateRender();
+        renderItems(cachedItems);
+        if (modalTab === 'cards') {
+            await refreshCardsView();
+        } else if (modalTab === 'stamps') {
+            await refreshStampsView();
+        }
         return;
     }
     modalCenter.textContent = 'Загрузка...';
@@ -180,14 +207,15 @@ async function loadItems() {
                 ITEM_CACHE.set(id, item);
             }
         });
+        rememberItemsList(cacheKey, items);
         const saved = equipment[String(slot)];
         modalUpgrade = saved ? Number(saved.upgrade || 0) : 0;
         invalidateRender();
         renderItems(items);
         if (modalTab === 'cards') {
-            await refreshCardsView(true);
+            await refreshCardsView();
         } else if (modalTab === 'stamps') {
-            await refreshStampsView(true);
+            await refreshStampsView();
         }
     } catch (e) {
         if (isAbortError(e) || token !== itemsRequestToken) {
