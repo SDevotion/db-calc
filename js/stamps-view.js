@@ -61,12 +61,12 @@ function getStampStats(variant, context, stateReason = '') {
 }
 
 function getStampSearchText(variant) {
-    return [
+    return memoizedSearchText(variant, 0, () => [
         variant.name || '',
         variant.color_name || '',
         ...(variant.bonuses || []).map(bonus => bonus.name_ru),
         ...(variant.bonuses || []).map(bonus => bonus.stat_alias),
-    ].filter(Boolean).join(' ').toLowerCase();
+    ].filter(Boolean).join(' ').toLowerCase());
 }
 
 function getStampSearchStats(variant) {

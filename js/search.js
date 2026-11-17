@@ -148,3 +148,21 @@ function searchMatchesTerms(text, statsOrGetter, parsed) {
         term.type === 'text' || stats.some(stat => searchStatMatchesCondition(stat, term))
     );
 }
+
+/* --- Мемоизация поискового текста --- */
+// Ключ — сам объект сущности: после перезагрузки данных приходит новый
+// объект и текст пересчитывается; старые записи уходят вместе с объектами.
+const SEARCH_TEXT_CACHE = new WeakMap();
+
+function memoizedSearchText(entity, upgradeLevel, compute) {
+    if (!entity || typeof entity !== 'object') {
+        return compute();
+    }
+    const cached = SEARCH_TEXT_CACHE.get(entity);
+    if (cached && cached.upgrade === upgradeLevel) {
+        return cached.text;
+    }
+    const text = compute();
+    SEARCH_TEXT_CACHE.set(entity, { upgrade: upgradeLevel, text });
+    return text;
+}

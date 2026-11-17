@@ -39,12 +39,13 @@ function findCardBonusOverride(bonus, itemTypeId) {
 }
 
 function getCardSearchText(card) {
-    return [
+    // Текст карты не зависит от улучшения/состояния — ключ только объект.
+    return memoizedSearchText(card, 0, () => [
         card.name || '',
         card.card_type_name || '',
         card.set && card.set.name ? card.set.name : '',
         ...getBonusSearchableStatNames(card),
-    ].join(' ').toLowerCase();
+    ].join(' ').toLowerCase());
 }
 
 function getCardSearchStats(card) {

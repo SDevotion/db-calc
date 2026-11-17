@@ -275,21 +275,23 @@ function getItemSearchUpgradeLevel(item) {
 
 function getItemSearchText(item) {
     const upgradeLevel = getItemSearchUpgradeLevel(item);
-    const baseNames = [];
-    BASE_STATS.forEach(def => {
-        if (!getBaseStatDisplay(item, def, upgradeLevel)) {
-            return;
-        }
-        baseNames.push(def.name_ru);
-        if (def.alias) {
-            baseNames.push(def.alias);
-        }
+    return memoizedSearchText(item, upgradeLevel, () => {
+        const baseNames = [];
+        BASE_STATS.forEach(def => {
+            if (!getBaseStatDisplay(item, def, upgradeLevel)) {
+                return;
+            }
+            baseNames.push(def.name_ru);
+            if (def.alias) {
+                baseNames.push(def.alias);
+            }
+        });
+        return [
+            item.name || '',
+            ...baseNames,
+            ...getBonusSearchableStatNames(item),
+        ].join(' ').toLowerCase();
     });
-    return [
-        item.name || '',
-        ...baseNames,
-        ...getBonusSearchableStatNames(item),
-    ].join(' ').toLowerCase();
 }
 
 function statSearchNames(nameRu, alias) {
