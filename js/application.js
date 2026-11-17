@@ -534,17 +534,10 @@ async function loadStamps() {
     }
 }
 async function ensureStampsLoaded(ids) {
-    const missing = uniquePositiveIds(ids).filter(id => {
+    return ensureLoaded(ids, 'stamps_by_ids', id => {
         const variant = STAMP_VARIANTS.get(id);
         return !variant || !Array.isArray(variant.bonuses);
-    });
-    if (!missing.length) {
-        return;
-    }
-    const data = await apiJson('stamps_by_ids', {
-        ids: missing.join(',')
-    });
-    (Array.isArray(data) ? data : []).forEach(markStampVariantFull);
+    }, markStampVariantFull);
 }
 async function loadEquipmentServerStamps(itemIds) {
     const ids = uniquePositiveIds(itemIds);
@@ -1856,18 +1849,22 @@ async function loadGrades() {
     }
 }
 
-async function ensureItemsLoaded(ids) {
-    const missing = uniquePositiveIds(ids).filter(id => !ITEM_CACHE.has(id));
+async function ensureLoaded(ids, action, isMissing, ingest) {
+    const missing = uniquePositiveIds(ids).filter(isMissing);
 
     if (!missing.length) {
         return;
     }
 
-    const data = await apiJson('items_by_ids', {
+    const data = await apiJson(action, {
         ids: missing.join(','),
     });
 
-    (Array.isArray(data) ? data : []).forEach(item => {
+    (Array.isArray(data) ? data : []).forEach(ingest);
+}
+
+async function ensureItemsLoaded(ids) {
+    return ensureLoaded(ids, 'items_by_ids', id => !ITEM_CACHE.has(id), item => {
         const id = Number(item.id || 0);
 
         if (id) {
@@ -1877,17 +1874,7 @@ async function ensureItemsLoaded(ids) {
 }
 
 async function ensureCardsLoaded(ids) {
-    const missing = uniquePositiveIds(ids).filter(id => !FULL_CARD_IDS.has(id));
-
-    if (!missing.length) {
-        return;
-    }
-
-    const data = await apiJson('cards_by_ids', {
-        ids: missing.join(','),
-    });
-
-    (Array.isArray(data) ? data : []).forEach(markCardFull);
+    return ensureLoaded(ids, 'cards_by_ids', id => !FULL_CARD_IDS.has(id), markCardFull);
 }
 
 async function loadEquipmentServerCards(itemIds) {
