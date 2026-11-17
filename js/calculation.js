@@ -181,6 +181,7 @@ function pruneDeletedUserSelections() {
         stampsItemType = null;
         cardsItemType = null;
         CARDS_BY_TYPE_CACHE.clear();
+        ITEM_CARDS_CACHE.clear();
         const typeId = Number(getSavedActiveItem()?.type_id || 0);
         if (typeId) {
             loadStampsForItemType(typeId);

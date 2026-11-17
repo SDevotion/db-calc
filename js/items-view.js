@@ -358,7 +358,9 @@ function filterBySearch(entries, getText, getStats) {
         return entries;
     }
 
-    return entries.filter(entry => searchMatchesTerms(getText(entry), getStats(entry), parsed));
+    // getStats передаём лениво: вызовется только для элементов, прошедших
+    // текстовый фильтр, и только если в запросе есть условия (>=, >, =, ...).
+    return entries.filter(entry => searchMatchesTerms(getText(entry), () => getStats(entry), parsed));
 }
 
 function getBonusSearchableStatNames(entity) {

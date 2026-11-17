@@ -212,7 +212,7 @@ function filterStampGroupsBySearch(groups, state) {
     }
     return groups.filter(group => {
         const variant = resolveStampGroupVariant(group, state);
-        return searchMatchesTerms(getStampSearchText(variant), getStampSearchStats(variant), parsed);
+        return searchMatchesTerms(getStampSearchText(variant), () => getStampSearchStats(variant), parsed);
     });
 }
 
@@ -416,6 +416,24 @@ async function loadItemStampForItem(itemId, force = false) {
     if (!force && itemStampState.loadedItemId === itemId) {
         return;
     }
+    // Серверная печать меняется только через админку.
+    // EQUIPMENT_SERVER_STAMPS переживает resetCardsState (шаг 1) —
+    // если запись уже есть, собираем состояние из неё без запроса.
+    const cached = !force ? EQUIPMENT_SERVER_STAMPS.get(Number(itemId)) : null;
+    if (cached) {
+        if (cached.variant) {
+            markStampVariantFull(cached.variant);
+        }
+        const cachedItem = ITEM_CACHE.get(Number(itemId));
+        itemStampState = {
+            loadedItemId: Number(itemId),
+            itemTypeId: Number((cachedItem && cachedItem.item_type_id) || 0),
+            isLocked: Number(cached.is_locked || 0) === 1,
+            variant: cached.variant || null,
+            loading: false,
+        };
+        return;
+    }
     const signal = beginRequest('item_stamp');
     try {
         const data = await apiJson('item_stamps', {
@@ -504,4 +522,3 @@ function removeStamp() {
     renderSockets();
     renderStampsTab();
 }
-

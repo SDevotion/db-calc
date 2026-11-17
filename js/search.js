@@ -113,7 +113,7 @@ function searchStatMatchesCondition(stat, term) {
     }
 }
 
-function searchMatchesTerms(text, stats, parsed) {
+function searchMatchesTerms(text, statsOrGetter, parsed) {
     if (!parsed.terms.length) {
         return true;
     }
@@ -124,12 +124,27 @@ function searchMatchesTerms(text, stats, parsed) {
 
     const lowerText = String(text || '').toLowerCase();
 
-    return parsed.terms.every(term => {
-        if (term.type === 'text') {
-            return lowerText.includes(term.text);
+    // Сначала дешёвые текстовые условия: если текст не совпал,
+    // числовые статы (резолв всех бонусов) считать не нужно.
+    for (const term of parsed.terms) {
+        if (term.type === 'text' && !lowerText.includes(term.text)) {
+            return false;
         }
+    }
 
-        return Array.isArray(stats) && stats.some(stat => searchStatMatchesCondition(stat, term));
-    });
+    if (!parsed.hasCondition) {
+        return true;
+    }
+
+    // Ленивый расчёт — только для элементов, прошедших текстовый фильтр.
+    // Готовый массив тоже принимаем: обратная совместимость вызывающих.
+    const stats = typeof statsOrGetter === 'function' ? statsOrGetter() : statsOrGetter;
+
+    if (!Array.isArray(stats)) {
+        return false;
+    }
+
+    return parsed.terms.every(term =>
+        term.type === 'text' || stats.some(stat => searchStatMatchesCondition(stat, term))
+    );
 }
-

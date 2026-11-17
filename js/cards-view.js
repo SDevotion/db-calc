@@ -528,12 +528,33 @@ function cleanupUserCardsForCurrentItem() {
     }
 }
 
+// Серверные карты предмета меняются только через админку —
+// кэшируем ответ на сессию страницы (переживает resetCardsState).
+const ITEM_CARDS_CACHE = new Map(); // item_id -> { sockets, itemTypeId }
+
 async function loadItemCardsForItem(itemId, force = false) {
     if (!itemId) {
         itemCardsState = emptyItemCardsState();
         return;
     }
     if (!force && itemCardsState.loadedItemId === itemId) {
+        return;
+    }
+    if (!force && ITEM_CARDS_CACHE.has(itemId)) {
+        const cached = ITEM_CARDS_CACHE.get(itemId);
+        cached.sockets.forEach(socket => {
+            if (socket.card) {
+                markCardFull(socket.card);
+            }
+        });
+        itemCardsState = {
+            loadedItemId: itemId,
+            sockets: cached.sockets,
+            socketsCount: cached.sockets.length,
+            itemTypeId: cached.itemTypeId,
+            loading: false,
+        };
+        cleanupUserCardsForCurrentItem();
         return;
     }
     const signal = beginRequest('item_cards');
@@ -554,6 +575,10 @@ async function loadItemCardsForItem(itemId, force = false) {
             itemTypeId: Number(data.item_type_id || 0),
             loading: false,
         };
+        ITEM_CARDS_CACHE.set(itemId, {
+            sockets,
+            itemTypeId: Number(data.item_type_id || 0),
+        });
         cleanupUserCardsForCurrentItem();
     } finally {
         endRequest('item_cards', signal);
