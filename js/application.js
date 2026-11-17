@@ -591,30 +591,22 @@ function getActiveStampForEquippedItem(savedItem) {
 }
 
 function collectEquippedUserStampIds() {
-    const ids = new Set();
-    Object.values(equipment || {}).forEach(savedItem => {
-        const value = savedItem && savedItem.user_stamp;
-        const id = value && typeof value === 'object' ? Number(value.id || 0) : Number(value || 0);
-        if (id) {
-            ids.add(id);
-        }
+    return collectIds(add => {
+        Object.values(equipment || {}).forEach(savedItem => {
+            add(savedValueId(savedItem && savedItem.user_stamp));
+        });
     });
-    return Array.from(ids);
 }
 
 function collectActiveEquippedStampIds() {
-    const ids = new Set();
-    Object.values(equipment || {}).forEach(savedItem => {
-        if (!isSavedItemActiveForCalc(savedItem)) {
-            return;
-        }
-        const variant = getActiveStampForEquippedItem(savedItem);
-        const id = Number(variant && variant.id ? variant.id : 0);
-        if (id) {
-            ids.add(id);
-        }
+    return collectIds(add => {
+        Object.values(equipment || {}).forEach(savedItem => {
+            if (!isSavedItemActiveForCalc(savedItem)) {
+                return;
+            }
+            add(equippedEntityId(getActiveStampForEquippedItem(savedItem)));
+        });
     });
-    return Array.from(ids);
 }
 
 function isStampAllowedForItemType(variant, itemTypeId) {
@@ -5703,11 +5695,15 @@ function forEachActiveEquippedCard(callback) {
 }
 
 function collectActiveEquippedCardIds() {
+    return collectIds(add => {
+        forEachActiveEquippedCard(card => add(equippedEntityId(card)));
+    });
+}
+
+function collectIds(each) {
     const ids = new Set();
 
-    forEachActiveEquippedCard(card => {
-        const id = Number(card && card.id ? card.id : 0);
-
+    each(id => {
         if (id) {
             ids.add(id);
         }
@@ -5716,25 +5712,23 @@ function collectActiveEquippedCardIds() {
     return Array.from(ids);
 }
 
+function savedValueId(value) {
+    return value && typeof value === 'object' ? Number(value.id || 0) : Number(value || 0);
+}
+
+function equippedEntityId(entity) {
+    return Number(entity && entity.id ? entity.id : 0);
+}
+
 function collectEquippedUserCardIds() {
-    const ids = new Set();
+    return collectIds(add => {
+        Object.values(equipment || {}).forEach(savedItem => {
+            const userCards = savedItem && savedItem.user_cards && typeof savedItem.user_cards === 'object' ?
+                savedItem.user_cards : {};
 
-    Object.values(equipment || {}).forEach(savedItem => {
-        const userCards = savedItem && savedItem.user_cards && typeof savedItem.user_cards === 'object' ?
-            savedItem.user_cards : {};
-
-        Object.values(userCards).forEach(value => {
-            const id = value && typeof value === 'object' ?
-                Number(value.id || 0) :
-                Number(value || 0);
-
-            if (id) {
-                ids.add(id);
-            }
+            Object.values(userCards).forEach(value => add(savedValueId(value)));
         });
     });
-
-    return Array.from(ids);
 }
 
 function migrateEquipmentUserCardSnapshots() {
