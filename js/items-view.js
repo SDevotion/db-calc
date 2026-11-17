@@ -384,6 +384,72 @@ function getBonusSearchableStatNames(entity) {
     return names;
 }
 
+/* --- Кэш DOM-карточек предметов --- */
+// Ключ — объект предмета: записи уходят вместе с ним, ручная инвалидация не нужна.
+const ITEM_CARD_CACHE = new WeakMap();
+let itemsGridEl = null;
+let itemsEmptyEl = null;
+let itemsGridSource = null;
+
+// Всё, что влияет на содержимое любой карточки, кроме самой карточки.
+// Считается один раз на рендер.
+function getItemCardContextSignature() {
+    return [
+        modalTab,
+        currentStateId,
+        getSelectedClassId(),
+        Array.from(enabledFeatureCheckboxIds).sort().join(','),
+        Array.from(getKnownEquippedCardIds()).sort((a, b) => a - b).join(','),
+        mapSignature(CALC_STATE.totals),
+        mapSignature(getEquippedItemTypeCounts()),
+    ].join('|');
+}
+
+function getItemCardEntry(item, contextSignature) {
+    const saved = activeSlot !== null ? equipment[String(activeSlot)] : null;
+    const isSelected = Boolean(saved && Number(saved.id) === Number(item.id));
+    const upgradeLevel = isSelected ? normalizeUpgradeForItem(item, saved.upgrade || 0) : 0;
+    const signature = contextSignature + '|' + (isSelected ? 1 : 0) + '|' + upgradeLevel;
+
+    let entry = ITEM_CARD_CACHE.get(item);
+
+    if (entry && entry.signature === signature) {
+        return entry;
+    }
+
+    if (!entry) {
+        entry = { el: createItemCardElement(item), signature: '' };
+        ITEM_CARD_CACHE.set(item, entry);
+    }
+
+    updateItemCardElement(entry.el, item, upgradeLevel, isSelected);
+    entry.signature = signature;
+
+    return entry;
+}
+
+// Приводим детей сетки к нужному порядку с минимумом перемещений.
+function syncItemGrid(items, contextSignature) {
+    let cursor = itemsGridEl.firstChild;
+
+    items.forEach(item => {
+        const el = getItemCardEntry(item, contextSignature).el;
+
+        if (el === cursor) {
+            cursor = cursor.nextSibling;
+            return;
+        }
+
+        itemsGridEl.insertBefore(el, cursor);
+    });
+
+    while (cursor) {
+        const next = cursor.nextSibling;
+        itemsGridEl.removeChild(cursor);
+        cursor = next;
+    }
+}
+
 function renderItemsInner(items) {
     currentItems = Array.isArray(items) ? items : [];
 
@@ -412,49 +478,58 @@ function renderItemsInner(items) {
 
     const visibleItems = filterBySearch(ruleVisibleItems, getItemSearchText, getItemSearchStats);
 
-    modalCenter.innerHTML = '';
-
-    if (!currentItems.length) {
-        const empty = document.createElement('div');
-        empty.className = 'empty';
-        empty.textContent = 'Нет доступных предметов.';
-        modalCenter.appendChild(empty);
-        updateUpgradeControlForSelected();
-        updateModalTabs();
-        scrollSelectedIntoView();
-        return;
-    }
-
-    if (!ruleVisibleItems.length) {
-        const empty = document.createElement('div');
-        empty.className = 'empty';
-        empty.textContent = 'Нет доступных предметов для этой ячейки.';
-        modalCenter.appendChild(empty);
-        updateUpgradeControlForSelected();
-        updateModalTabs();
-        scrollSelectedIntoView();
-        return;
+    // Новый список (другая ячейка/персонаж) — новая сетка,
+    // чтобы DOM прошлых списков не удерживался в памяти.
+    if (itemsGridSource !== currentItems) {
+        itemsGridSource = currentItems;
+        itemsGridEl = null;
     }
 
     if (!visibleItems.length) {
-        const empty = document.createElement('div');
-        empty.className = 'empty';
-        empty.textContent = 'Нет предметов по запросу.';
-        modalCenter.appendChild(empty);
+        if (!itemsEmptyEl) {
+            itemsEmptyEl = document.createElement('div');
+            itemsEmptyEl.className = 'empty';
+        }
+
+        itemsEmptyEl.textContent = !currentItems.length ?
+            'Нет доступных предметов.' :
+            (!ruleVisibleItems.length ?
+                'Нет доступных предметов для этой ячейки.' :
+                'Нет предметов по запросу.');
+
+        if (itemsGridEl && itemsGridEl.parentNode === modalCenter) {
+            modalCenter.removeChild(itemsGridEl);
+        }
+
+        if (itemsEmptyEl.parentNode !== modalCenter) {
+            modalCenter.textContent = '';
+            modalCenter.appendChild(itemsEmptyEl);
+        }
+
         updateUpgradeControlForSelected();
         updateModalTabs();
         scrollSelectedIntoView();
         return;
     }
 
-    const grid = document.createElement('div');
-    grid.className = 'item-grid';
+    if (itemsEmptyEl && itemsEmptyEl.parentNode === modalCenter) {
+        modalCenter.removeChild(itemsEmptyEl);
+    }
 
-    visibleItems.forEach(item => {
-        grid.appendChild(createItemCard(item));
-    });
+    if (!itemsGridEl) {
+        itemsGridEl = document.createElement('div');
+        itemsGridEl.className = 'item-grid';
+    }
 
-    modalCenter.appendChild(grid);
+    // Вкладка карт/печатей или «Загрузка...» могли очистить modalCenter —
+    // сетка жива в JS, просто возвращаем её на место.
+    if (itemsGridEl.parentNode !== modalCenter) {
+        modalCenter.textContent = '';
+        modalCenter.appendChild(itemsGridEl);
+    }
+
+    syncItemGrid(visibleItems, getItemCardContextSignature());
+
     updateUpgradeControlForSelected();
     updateModalTabs();
     scrollSelectedIntoView();
@@ -466,6 +541,7 @@ function renderStatsList(statsList, stats, allowDescription = false) {
         return;
     }
 
+    statsList.hidden = false;
     statsList.textContent = '';
 
     stats.forEach(stat => {
@@ -501,15 +577,13 @@ function renderStatsList(statsList, stats, allowDescription = false) {
     });
 }
 
-function createItemCard(item) {
+// Структура и статические поля — один раз на объект предмета.
+function createItemCardElement(item) {
     const template = document.getElementById('item-card-template');
     const card = template.content.firstElementChild.cloneNode(true);
 
     const icon = card.querySelector('.item-icon');
     const fallback = card.querySelector('.item-icon-fallback');
-    const name = card.querySelector('.item-name');
-    const type = card.querySelector('.item-type');
-    const statsList = card.querySelector('.item-stats');
 
     icon.addEventListener('error', () => {
         icon.hidden = true;
@@ -519,16 +593,8 @@ function createItemCard(item) {
     icon.src = item.icon_path;
     icon.alt = item.name;
 
-    name.textContent = item.name;
-    type.textContent = item.type_name;
-
-    const saved = activeSlot !== null ? equipment[String(activeSlot)] : null;
-    const isSelected = saved && Number(saved.id) === Number(item.id);
-    const upgradeLevel = isSelected ? normalizeUpgradeForItem(item, saved.upgrade || 0) : 0;
-
-    const stats = getItemStats(item, upgradeLevel);
-
-    renderStatsList(statsList, stats, true);
+    card.querySelector('.item-name').textContent = item.name;
+    card.querySelector('.item-type').textContent = item.type_name;
 
     const levelWrap = card.querySelector('.item-required-level');
     const gradeWrap = card.querySelector('.item-grade');
@@ -541,15 +607,25 @@ function createItemCard(item) {
         gradeWrap.querySelector('.item-footer-value').textContent = item.grade ? getGradeName(item.grade) : '';
     }
 
-    if (isSelected) {
-        card.classList.add('selected');
-    }
-
-    if (!isItemStateActive(item)) {
-        card.classList.add('item-inactive');
-    }
-
     card.addEventListener('click', () => saveItem(item));
+
+    return card;
+}
+
+// Динамическая часть — только при изменении сигнатуры.
+function updateItemCardElement(card, item, upgradeLevel, isSelected) {
+    renderStatsList(card.querySelector('.item-stats'), getItemStats(item, upgradeLevel), true);
+    card.classList.toggle('selected', isSelected);
+    card.classList.toggle('item-inactive', !isItemStateActive(item));
+}
+
+function createItemCard(item) {
+    const card = createItemCardElement(item);
+    const saved = activeSlot !== null ? equipment[String(activeSlot)] : null;
+    const isSelected = Boolean(saved && Number(saved.id) === Number(item.id));
+    const upgradeLevel = isSelected ? normalizeUpgradeForItem(item, saved.upgrade || 0) : 0;
+
+    updateItemCardElement(card, item, upgradeLevel, isSelected);
 
     return card;
 }
