@@ -245,6 +245,31 @@ async function loadStates() {
     }
 }
 
+function rebuildSlotRulesIndex() {
+    SLOT_RULES_INDEX.clear();
+    EFFECTIVE_RULES_CACHE.clear();
+
+    // Обход в порядке массива: при дублях (slot, class, item_type)
+    // побеждает последнее правило — та же семантика, что и раньше.
+    SLOT_RULES.forEach(rule => {
+        let byClass = SLOT_RULES_INDEX.get(rule.slot_number);
+
+        if (!byClass) {
+            byClass = new Map();
+            SLOT_RULES_INDEX.set(rule.slot_number, byClass);
+        }
+
+        let byType = byClass.get(rule.class_id);
+
+        if (!byType) {
+            byType = new Map();
+            byClass.set(rule.class_id, byType);
+        }
+
+        byType.set(rule.item_type_id, rule.restriction);
+    });
+}
+
 async function loadSlotRules() {
     try {
         const rows = fromBootstrap('slot_rules') ?? await apiJson('slot_rules');
@@ -259,6 +284,8 @@ async function loadSlotRules() {
                 restriction: String(r.restriction),
             });
         });
+
+        rebuildSlotRulesIndex();
     } catch (e) {
         reportLoadError('правила ячеек', e);
     }

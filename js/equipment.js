@@ -155,28 +155,41 @@ async function loadSlotTypes() {
 }
 
 function getEffectiveRules(slotNumber) {
-    const rules = new Map();
     const info = INFO[classSelect.value];
 
     if (!info) {
-        return rules;
+        return new Map();
     }
 
-    const classIds = [];
+    const slot = Number(slotNumber);
+    const cacheKey = slot + '|' + info.id;
+    const cached = EFFECTIVE_RULES_CACHE.get(cacheKey);
 
-    if (info.parent_id) {
-        classIds.push(info.parent_id);
+    if (cached) {
+        return cached;
     }
 
-    classIds.push(info.id);
+    const rules = new Map();
+    const byClass = SLOT_RULES_INDEX.get(slot);
 
-    classIds.forEach(classId => {
-        SLOT_RULES.forEach(rule => {
-            if (rule.slot_number === slotNumber && rule.class_id === classId) {
-                rules.set(rule.item_type_id, rule.restriction);
+    if (byClass) {
+        // Сначала родительский класс, затем прямой — прямой перекрывает.
+        if (info.parent_id) {
+            const parentRules = byClass.get(Number(info.parent_id));
+
+            if (parentRules) {
+                parentRules.forEach((restriction, typeId) => rules.set(typeId, restriction));
             }
-        });
-    });
+        }
+
+        const directRules = byClass.get(Number(info.id));
+
+        if (directRules) {
+            directRules.forEach((restriction, typeId) => rules.set(typeId, restriction));
+        }
+    }
+
+    EFFECTIVE_RULES_CACHE.set(cacheKey, rules);
 
     return rules;
 }

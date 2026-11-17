@@ -415,6 +415,12 @@ function restoreCharacterSelection() {
 const INFO = {};
 const FEATURES = {};
 const SLOT_RULES = [];
+// Производный индекс правил: slot_number -> class_id -> item_type_id -> restriction.
+// Строится один раз в loadSlotRules() — выборка O(1) вместо скана массива.
+const SLOT_RULES_INDEX = new Map();
+// Кэш слитых правил (родительский класс + прямой) на пару (ячейка, класс).
+// Сбрасывается при перезагрузке правил. Значения только для чтения.
+const EFFECTIVE_RULES_CACHE = new Map();
 const TABS = [];
 const TAB_MAP = new Map();
 
