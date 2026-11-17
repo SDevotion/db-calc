@@ -308,7 +308,7 @@ function getRenderSignature() {
         searchInput ? searchInput.value : '',
         Array.from(enabledFeatureCheckboxIds).sort().join(','),
         mapSignature(CALC_STATE.totals),
-        JSON.stringify(equipment),
+        equipmentVersion,
     ].join('|');
 }
 

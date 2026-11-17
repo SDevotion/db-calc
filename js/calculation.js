@@ -137,7 +137,7 @@ function migrateEquipmentUserCardSnapshots() {
     });
 
     if (changed) {
-        storageSet(EQUIPMENT_STORAGE_KEY, JSON.stringify(equipment));
+        persistEquipment();
     }
 }
 /* Удаляем из выбора то, чего больше нет на сервере. Карты в слотах,

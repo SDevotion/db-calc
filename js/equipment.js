@@ -17,6 +17,7 @@ function loadEquipment() {
 }
 
 function persistEquipment() {
+    equipmentVersion++;
     storageSet(EQUIPMENT_STORAGE_KEY, JSON.stringify(equipment));
 }
 

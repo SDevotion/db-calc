@@ -1,6 +1,9 @@
 let prevSelected = null;
 let activeSlot = null;
 let equipment = {};
+// Версия экипировки: инкремент при каждой записи (persistEquipment).
+// Дешёвая замена JSON.stringify(equipment) в сигнатуре рендера.
+let equipmentVersion = 0;
 
 let currentItems = [];
 let currentCardsAll = [];
