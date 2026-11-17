@@ -177,15 +177,55 @@ function attach_card_bonus_conditions(PDO $pdo, array &$bonuses): void
     });
 }
 
-function fetch_item_bonuses_grouped(PDO $pdo, array $itemIds): array
+function fetch_bonuses_grouped(PDO $pdo, array $ids, string $entity, string $sql, ?callable $extraCasts = null, ?callable $postAttach = null): array
 {
-    if (!$itemIds) {
+    if (!$ids) {
         return [];
     }
 
-    $placeholders = in_placeholders($itemIds);
+    $placeholders = in_placeholders($ids);
 
-    $stmt = $pdo->prepare("
+    $stmt = $pdo->prepare(str_replace('{ph}', $placeholders, $sql));
+    $stmt->execute($ids);
+    $bonuses = $stmt->fetchAll();
+
+    $key = $entity . '_id';
+
+    foreach ($bonuses as &$bonus) {
+        $bonus['id'] = (int)$bonus['id'];
+        $bonus[$key] = (int)$bonus[$key];
+        $bonus['stat_id'] = (int)$bonus['stat_id'];
+        $bonus['value'] = (float)$bonus['value'];
+        $bonus['feature_id'] = cast_int_or_null($bonus['feature_id']);
+        $bonus['text_note_id'] = cast_int_or_null($bonus['text_note_id']);
+
+        if ($extraCasts) {
+            $extraCasts($bonus);
+        }
+    }
+
+    unset($bonus);
+
+    // attach_item_bonus_conditions / attach_card_bonus_conditions
+    $attach = 'attach_' . $entity . '_bonus_conditions';
+    $attach($pdo, $bonuses);
+
+    if ($postAttach) {
+        $postAttach($pdo, $bonuses);
+    }
+
+    $grouped = [];
+
+    foreach ($bonuses as $bonus) {
+        $grouped[(int)$bonus[$key]][] = $bonus;
+    }
+
+    return $grouped;
+}
+
+function fetch_item_bonuses_grouped(PDO $pdo, array $itemIds): array
+{
+    return fetch_bonuses_grouped($pdo, $itemIds, 'item', "
         SELECT
             b.id,
             b.item_id,
@@ -211,33 +251,9 @@ function fetch_item_bonuses_grouped(PDO $pdo, array $itemIds): array
         FROM item_bonuses b
         JOIN stats s ON s.id = b.stat_id
         LEFT JOIN text_notes tn ON tn.id = b.text_note_id
-        WHERE b.item_id IN ($placeholders)
+        WHERE b.item_id IN ({ph})
         ORDER BY b.item_id, b.sort_order, b.id
     ");
-
-    $stmt->execute($itemIds);
-    $bonuses = $stmt->fetchAll();
-
-    foreach ($bonuses as &$bonus) {
-        $bonus['id'] = (int)$bonus['id'];
-        $bonus['item_id'] = (int)$bonus['item_id'];
-        $bonus['stat_id'] = (int)$bonus['stat_id'];
-        $bonus['value'] = (float)$bonus['value'];
-        $bonus['feature_id'] = cast_int_or_null($bonus['feature_id']);
-        $bonus['text_note_id'] = cast_int_or_null($bonus['text_note_id']);
-    }
-
-    unset($bonus);
-
-    attach_item_bonus_conditions($pdo, $bonuses);
-
-    $grouped = [];
-
-    foreach ($bonuses as $bonus) {
-        $grouped[(int)$bonus['item_id']][] = $bonus;
-    }
-
-    return $grouped;
 }
 
 function build_items_payload(PDO $pdo, array $items): array
@@ -278,13 +294,52 @@ $item['internal_level'] = cast_int_or_null($item['internal_level'] ?? null);
 
 function fetch_card_bonuses_grouped(PDO $pdo, array $cardIds): array
 {
-    if (!$cardIds) {
-        return [];
-    }
+    $extraCasts = static function (array &$bonus): void {
+        $bonus['value_max'] = cast_float_or_null($bonus['value_max']);
+        $bonus['depends_on_card_id'] = cast_int_or_null($bonus['depends_on_card_id']);
+    };
 
-    $placeholders = in_placeholders($cardIds);
+    $postAttach = static function (PDO $pdo, array &$bonuses): void {
+        $bonusIds = array_values(array_unique(array_map('intval', array_column($bonuses, 'id'))));
+        $overridesByBonus = [];
 
-    $stmt = $pdo->prepare("
+        if ($bonusIds) {
+            $bonusPlaceholders = in_placeholders($bonusIds);
+
+            $overrideStmt = $pdo->prepare("
+                SELECT
+                    card_bonus_id,
+                    item_type_id,
+                    `value`,
+                    value_max
+                FROM card_bonus_item_type_overrides
+                WHERE card_bonus_id IN ($bonusPlaceholders)
+                ORDER BY card_bonus_id, item_type_id
+            ");
+
+            $overrideStmt->execute($bonusIds);
+            $overrides = $overrideStmt->fetchAll();
+
+            foreach ($overrides as $override) {
+                $override['value'] = (float)$override['value'];
+                $override['value_max'] = cast_float_or_null($override['value_max']);
+
+                $overridesByBonus[(int)$override['card_bonus_id']][] = [
+                    'item_type_id' => (int)$override['item_type_id'],
+                    'value' => $override['value'],
+                    'value_max' => $override['value_max'],
+                ];
+            }
+        }
+
+        foreach ($bonuses as &$bonus) {
+            $bonus['overrides'] = $overridesByBonus[(int)$bonus['id']] ?? [];
+        }
+
+        unset($bonus);
+    };
+
+    return fetch_bonuses_grouped($pdo, $cardIds, 'card', "
         SELECT
             b.id,
             b.card_id,
@@ -315,68 +370,9 @@ function fetch_card_bonuses_grouped(PDO $pdo, array $cardIds): array
         FROM card_bonuses b
         JOIN stats s ON s.id = b.stat_id
         LEFT JOIN text_notes tn ON tn.id = b.text_note_id
-        WHERE b.card_id IN ($placeholders)
+        WHERE b.card_id IN ({ph})
         ORDER BY b.card_id, b.sort_order, b.id
-    ");
-
-    $stmt->execute($cardIds);
-    $bonuses = $stmt->fetchAll();
-
-    foreach ($bonuses as &$bonus) {
-        $bonus['id'] = (int)$bonus['id'];
-        $bonus['card_id'] = (int)$bonus['card_id'];
-        $bonus['stat_id'] = (int)$bonus['stat_id'];
-        $bonus['value'] = (float)$bonus['value'];
-        $bonus['value_max'] = cast_float_or_null($bonus['value_max']);
-        $bonus['feature_id'] = cast_int_or_null($bonus['feature_id']);
-        $bonus['text_note_id'] = cast_int_or_null($bonus['text_note_id']);
-        $bonus['depends_on_card_id'] = cast_int_or_null($bonus['depends_on_card_id']);
-    }
-
-    unset($bonus);
-
-    attach_card_bonus_conditions($pdo, $bonuses);
-
-    $bonusIds = array_values(array_unique(array_map('intval', array_column($bonuses, 'id'))));
-    $overridesByBonus = [];
-
-    if ($bonusIds) {
-        $bonusPlaceholders = in_placeholders($bonusIds);
-
-        $overrideStmt = $pdo->prepare("
-            SELECT
-                card_bonus_id,
-                item_type_id,
-                `value`,
-                value_max
-            FROM card_bonus_item_type_overrides
-            WHERE card_bonus_id IN ($bonusPlaceholders)
-            ORDER BY card_bonus_id, item_type_id
-        ");
-
-        $overrideStmt->execute($bonusIds);
-        $overrides = $overrideStmt->fetchAll();
-
-        foreach ($overrides as $override) {
-            $override['value'] = (float)$override['value'];
-            $override['value_max'] = cast_float_or_null($override['value_max']);
-
-            $overridesByBonus[(int)$override['card_bonus_id']][] = [
-                'item_type_id' => (int)$override['item_type_id'],
-                'value' => $override['value'],
-                'value_max' => $override['value_max'],
-            ];
-        }
-    }
-
-    $grouped = [];
-
-    foreach ($bonuses as $bonus) {
-        $bonus['overrides'] = $overridesByBonus[(int)$bonus['id']] ?? [];
-        $grouped[(int)$bonus['card_id']][] = $bonus;
-    }
-
-    return $grouped;
+    ", $extraCasts, $postAttach);
 }
 
 function get_cards_by_ids(PDO $pdo, array $cardIds): array
