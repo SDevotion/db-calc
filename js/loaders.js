@@ -400,11 +400,19 @@ async function loadEquipmentServerCards(itemIds) {
         return;
     }
 
+    // Серверные карты меняются только через админку —
+    // дозапрашиваем только предметы, которых ещё нет в кэше.
+    const missing = ids.filter(id => !EQUIPMENT_SERVER_CARDS.has(id));
+
+    if (!missing.length) {
+        return;
+    }
+
     const data = await apiJson('equipment_cards', {
-        item_ids: ids.join(','),
+        item_ids: missing.join(','),
     });
 
-    ids.forEach(id => {
+    missing.forEach(id => {
         const entry = data[String(id)] || data[id] || {
             sockets: []
         };

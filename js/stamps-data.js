@@ -92,11 +92,16 @@ async function loadEquipmentServerStamps(itemIds) {
         EQUIPMENT_SERVER_STAMPS.clear();
         return;
     }
+    // Серверные печати меняются только через админку —
+    // дозапрашиваем только предметы, которых ещё нет в кэше.
+    const missing = ids.filter(id => !EQUIPMENT_SERVER_STAMPS.has(id));
+    if (!missing.length) {
+        return;
+    }
     const data = await apiJson('equipment_stamps', {
-        item_ids: ids.join(',')
+        item_ids: missing.join(',')
     });
-    EQUIPMENT_SERVER_STAMPS.clear();
-    ids.forEach(id => {
+    missing.forEach(id => {
         const entry = data[String(id)] || data[id] || {
             is_locked: 0,
             variant: null

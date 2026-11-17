@@ -519,6 +519,7 @@ async function refreshEquipmentCalculationData(force = false) {
     equipmentCalcPromise = (async () => {
         if (force) {
             EQUIPMENT_SERVER_CARDS.clear();
+            EQUIPMENT_SERVER_STAMPS.clear();
             FULL_CARD_IDS.clear();
         }
 
