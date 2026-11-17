@@ -484,18 +484,7 @@ function getStampInternalLevel(item, savedItem = null) {
 }
 
 function markStampVariantFull(variant) {
-    if (!variant) {
-        return;
-    }
-    const id = Number(variant.id || 0);
-    if (!id) {
-        return;
-    }
-    const prev = STAMP_VARIANTS.get(id) || {};
-    STAMP_VARIANTS.set(id, {
-        ...prev,
-        ...variant
-    });
+    mergeIntoCacheById(STAMP_VARIANTS, variant);
 }
 
 function getFullStampVariant(id, fallback = null) {
@@ -1517,24 +1506,30 @@ function makeCardSnapshot(card) {
     };
 }
 
-function markCardFull(card) {
-    if (!card) {
-        return;
+function mergeIntoCacheById(cache, entity) {
+    if (!entity) {
+        return 0;
     }
 
-    const id = Number(card.id || 0);
+    const id = Number(entity.id || 0);
 
     if (!id) {
-        return;
+        return 0;
     }
 
-    const prev = CARD_CACHE.get(id) || {};
-    CARD_CACHE.set(id, {
+    const prev = cache.get(id) || {};
+    cache.set(id, {
         ...prev,
-        ...card
+        ...entity
     });
 
-    if (Array.isArray(card.bonuses)) {
+    return id;
+}
+
+function markCardFull(card) {
+    const id = mergeIntoCacheById(CARD_CACHE, card);
+
+    if (id && Array.isArray(card.bonuses)) {
         FULL_CARD_IDS.add(id);
     }
 }
