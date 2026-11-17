@@ -486,45 +486,71 @@ function calculateEquipmentStatTotals() {
     const setStates = refreshSetStatesSync();
     const candidates = collectCandidateBonuses(setStates);
 
-    let totals = new Map();
-    let resolved = new Map();
-    let previousSignature = '';
+    // От итогов зависят только per_stat / stat_threshold.
+    // Остальные бонусы достаточно посчитать один раз.
+    const independent = [];
+    const dependent = [];
 
+    candidates.forEach(candidate => {
+        const type = String(candidate.bonus.scaling_type || 'none');
+
+        if (type === 'per_stat' || type === 'stat_threshold') {
+            dependent.push(candidate);
+        } else {
+            independent.push(candidate);
+        }
+    });
+
+    const resolved = new Map();
+    let totals = new Map();
+
+    const accumulate = (candidate, result, into) => {
+        if (result.active && candidate.value_type === 'flat') {
+            const statId = Number(candidate.stat_id || 0);
+            const value = Number(result.value || 0);
+
+            if (statId && Number.isFinite(value)) {
+                into.set(statId, (into.get(statId) || 0) + value);
+            }
+        }
+    };
+
+    independent.forEach(candidate => {
+        const result = resolveBonusForCalculation(candidate.bonus, candidate.context, totals);
+        resolved.set(candidate.key, result);
+        accumulate(candidate, result, totals);
+    });
+
+    const baseTotals = totals;
+    let previousSignature = '';
     const maxIterations = 20;
 
-    for (let iteration = 0; iteration < maxIterations; iteration++) {
-        const nextTotals = new Map();
-        const nextResolved = new Map();
+    for (let iteration = 0; iteration < maxIterations && dependent.length; iteration++) {
+        const nextTotals = new Map(baseTotals);
 
-        candidates.forEach(candidate => {
+        dependent.forEach(candidate => {
             const result = resolveBonusForCalculation(candidate.bonus, candidate.context, totals);
-            nextResolved.set(candidate.key, result);
-
-            if (result.active && candidate.value_type === 'flat') {
-                const statId = Number(candidate.stat_id || 0);
-                const value = Number(result.value || 0);
-
-                if (statId && Number.isFinite(value)) {
-                    nextTotals.set(statId, (nextTotals.get(statId) || 0) + value);
-                }
-            }
+            resolved.set(candidate.key, result);
+            accumulate(candidate, result, nextTotals);
         });
 
-        CALC_STATE.totals = nextTotals;
-        CALC_STATE.resolved = nextResolved;
-
         const signature = mapSignature(nextTotals);
+
+        totals = nextTotals;
 
         if (signature === previousSignature) {
             break;
         }
 
         previousSignature = signature;
-        totals = nextTotals;
+
         if (iteration === maxIterations - 1) {
             console.warn('Пересчёт характеристик не сошёлся за ' + maxIterations + ' итераций — возможен цикл зависимостей.');
         }
     }
+
+    CALC_STATE.totals = totals;
+    CALC_STATE.resolved = resolved;
     CALC_STATE.ready = true;
     CALC_STATE.updatedAt = Date.now();
 

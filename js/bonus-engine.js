@@ -347,9 +347,11 @@ function resolveBonus(bonus, context, options = {}) {
             addHint(reasonMultiplyIdenticalCards(bonus));
         }
     } else if (scalingType === 'per_stat') {
-        const totals = context.totals instanceof Map ?
-            context.totals :
-            (window.CALC_STATE && window.CALC_STATE.ready ? window.CALC_STATE.totals : null);
+        const totals = options.totals instanceof Map ?
+            options.totals :
+            (context.totals instanceof Map ?
+                context.totals :
+                (window.CALC_STATE && window.CALC_STATE.ready ? window.CALC_STATE.totals : null));
 
         if (!totals) {
             value = 0;
@@ -396,9 +398,11 @@ function resolveBonus(bonus, context, options = {}) {
             }
         }
     } else if (scalingType === 'stat_threshold') {
-        const totals = context.totals instanceof Map ?
-            context.totals :
-            (window.CALC_STATE && window.CALC_STATE.ready ? window.CALC_STATE.totals : null);
+        const totals = options.totals instanceof Map ?
+            options.totals :
+            (context.totals instanceof Map ?
+                context.totals :
+                (window.CALC_STATE && window.CALC_STATE.ready ? window.CALC_STATE.totals : null));
 
         const sourceId = Number(bonus.stat_source_id || 0);
         const threshold = Math.max(0, Number(bonus.stat_threshold || 0));
@@ -477,14 +481,11 @@ function resolveBonusContext(bonus, context) {
 }
 
 function resolveBonusForCalculation(bonus, context, totals) {
-    return resolveBonus(
-        bonus, {
-            ...context,
-            totals,
-        }, {
-            mode: 'calc'
-        }
-    );
+    // totals передаём через options — без копии контекста на каждый бонус.
+    return resolveBonus(bonus, context, {
+        mode: 'calc',
+        totals
+    });
 }
 
 function formatResolvedBonusValue(resolved, bonus) {
