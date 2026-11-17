@@ -193,12 +193,6 @@ function grade_codes(): array
     return array_keys(grade_all());
 }
 
-function grade_label(string $code): string
-{
-    $code = strtoupper(trim($code));
-    return grade_all()[$code]['name'] ?? $code;
-}
-
 function base_stat_labels(): array
 {
     static $cache = null;
@@ -266,11 +260,6 @@ function slot_count(): int
     $n = count(slot_all());
     // Таблица ещё не создана — не ограничиваем.
     return $n > 0 ? $n : 255;
-}
-
-function slot_label(int $number): string
-{
-    return slot_all()[$number]['name'] ?? ('Ячейка ' . $number);
 }
 
 function slot_pair_groups(): array

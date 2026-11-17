@@ -47,6 +47,38 @@ function cast_float_or_null($value): ?float
     return (float)$value;
 }
 
+// Проверка параметров персонажа и список классов с учётом родительского.
+function character_class_ids(PDO $pdo, string $gender, int $classId, int $level): array
+{
+    if (!in_array($gender, enum_codes('gender', 'character'), true)) {
+        throw new RuntimeException('Некорректный пол персонажа.');
+    }
+
+    if ($classId <= 0) {
+        throw new RuntimeException('Некорректный класс персонажа.');
+    }
+
+    if ($level < 1 || $level > setting_int('max_character_level', 65, 1, 255)) {
+        throw new RuntimeException('Некорректный уровень персонажа.');
+    }
+
+    $stmt = $pdo->prepare('SELECT id, parent_id FROM classes WHERE id = ?');
+    $stmt->execute([$classId]);
+    $class = $stmt->fetch();
+
+    if (!$class) {
+        throw new RuntimeException('Класс не найден.');
+    }
+
+    $classIds = [$classId];
+
+    if ($class['parent_id'] !== null) {
+        $classIds[] = (int)$class['parent_id'];
+    }
+
+    return array_values(array_unique($classIds));
+}
+
 function attach_bonus_conditions(PDO $pdo, array &$bonuses, string $entity, ?callable $setup, callable $enrich): void
 {
     if (!$bonuses) {
@@ -656,14 +688,6 @@ function api_cache_key(string $action): ?string
     return $action . '_' . md5(json_encode($params));
 }
 
-function api_output(array $result, bool $cacheable): void
-{
-    api_output_json(
-        json_encode($result, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR),
-        $cacheable
-    );
-}
-
 function api_output_json(string $json, bool $cacheable): void
 {
     if ($cacheable) {
@@ -883,33 +907,7 @@ break;
             $classId = (int)($_GET['class_id'] ?? 0);
             $level = (int)($_GET['level'] ?? 0);
 
-            if (!in_array($gender, enum_codes('gender', 'character'), true)) {
-                throw new RuntimeException('Некорректный пол персонажа.');
-            }
-
-            if ($classId <= 0) {
-                throw new RuntimeException('Некорректный класс персонажа.');
-            }
-
-            if ($level < 1 || $level > setting_int('max_character_level', 65, 1, 255)) {
-                throw new RuntimeException('Некорректный уровень персонажа.');
-            }
-
-            $stmt = $pdo->prepare('SELECT id, parent_id FROM classes WHERE id = ?');
-            $stmt->execute([$classId]);
-            $class = $stmt->fetch();
-
-            if (!$class) {
-                throw new RuntimeException('Класс не найден.');
-            }
-
-            $classIds = [$classId];
-
-            if ($class['parent_id'] !== null) {
-                $classIds[] = (int)$class['parent_id'];
-            }
-
-            $classIds = array_values(array_unique($classIds));
+            $classIds = character_class_ids($pdo, $gender, $classId, $level);
             $classPlaceholders = in_placeholders($classIds);
 
             $stmt = $pdo->prepare("
@@ -1335,33 +1333,7 @@ WHERE i.id IN ($placeholders)
 throw new RuntimeException('Некорректный номер ячейки.');
 }
 
-            if (!in_array($gender, enum_codes('gender', 'character'), true)) {
-                throw new RuntimeException('Некорректный пол персонажа.');
-            }
-
-            if ($classId <= 0) {
-                throw new RuntimeException('Некорректный класс персонажа.');
-            }
-
-            if ($level < 1 || $level > setting_int('max_character_level', 65, 1, 255)) {
-                throw new RuntimeException('Некорректный уровень персонажа.');
-            }
-
-            $stmt = $pdo->prepare('SELECT id, parent_id FROM classes WHERE id = ?');
-            $stmt->execute([$classId]);
-            $class = $stmt->fetch();
-
-            if (!$class) {
-                throw new RuntimeException('Класс не найден.');
-            }
-
-            $classIds = [$classId];
-
-            if ($class['parent_id'] !== null) {
-                $classIds[] = (int)$class['parent_id'];
-            }
-
-            $classIds = array_values(array_unique($classIds));
+            $classIds = character_class_ids($pdo, $gender, $classId, $level);
             $classPlaceholders = in_placeholders($classIds);
 
             $sql = "
@@ -1469,33 +1441,7 @@ i.name ASC
                 throw new RuntimeException('Некорректный список предметов.');
             }
 
-            if (!in_array($gender, enum_codes('gender', 'character'), true)) {
-                throw new RuntimeException('Некорректный пол персонажа.');
-            }
-
-            if ($classId <= 0) {
-                throw new RuntimeException('Некорректный класс персонажа.');
-            }
-
-            if ($level < 1 || $level > setting_int('max_character_level', 65, 1, 255)) {
-                throw new RuntimeException('Некорректный уровень персонажа.');
-            }
-
-            $stmt = $pdo->prepare('SELECT id, parent_id FROM classes WHERE id = ?');
-            $stmt->execute([$classId]);
-            $class = $stmt->fetch();
-
-            if (!$class) {
-                throw new RuntimeException('Класс не найден.');
-            }
-
-            $classIds = [$classId];
-
-            if ($class['parent_id'] !== null) {
-                $classIds[] = (int)$class['parent_id'];
-            }
-
-            $classIds = array_values(array_unique($classIds));
+            $classIds = character_class_ids($pdo, $gender, $classId, $level);
             $classPlaceholders = in_placeholders($classIds);
 
             // Правила ячеек: прямые правила класса перекрывают родительские
