@@ -3199,6 +3199,47 @@ function renderItemsInner(items) {
     scrollSelectedIntoView();
 }
 
+function renderStatsList(statsList, stats, allowDescription = false) {
+    if (!stats.length) {
+        statsList.hidden = true;
+        return;
+    }
+
+    statsList.textContent = '';
+
+    stats.forEach(stat => {
+        const li = document.createElement('li');
+
+        if (stat.isStateNotice) {
+            li.className = 'item-state-notice';
+            li.textContent = stat.value;
+            statsList.appendChild(li);
+            return;
+        }
+
+        const valueSpan = document.createElement('span');
+        valueSpan.className = 'item-stat-value';
+        valueSpan.textContent = stat.value;
+
+        if (allowDescription && stat.isDescription) {
+            li.classList.add('item-description');
+        } else {
+            li.textContent = stat.label + ': ';
+        }
+
+        li.appendChild(valueSpan);
+
+        renderStatNote(li, stat.note);
+        renderStatNote(li, stat.reasons);
+
+        if (stat.isHidden) {
+            li.classList.add('item-hidden-stat');
+        }
+
+        statsList.appendChild(li);
+    });
+}
+
 function createItemCard(item) {
     const template = document.getElementById('item-card-template');
     const card = template.content.firstElementChild.cloneNode(true);
@@ -3226,43 +3267,7 @@ function createItemCard(item) {
 
     const stats = getItemStats(item, upgradeLevel);
 
-    if (!stats.length) {
-        statsList.hidden = true;
-    } else {
-        statsList.textContent = '';
-
-        stats.forEach(stat => {
-            const li = document.createElement('li');
-
-            if (stat.isStateNotice) {
-                li.className = 'item-state-notice';
-                li.textContent = stat.value;
-                statsList.appendChild(li);
-                return;
-            }
-
-            const valueSpan = document.createElement('span');
-            valueSpan.className = 'item-stat-value';
-            valueSpan.textContent = stat.value;
-
-            if (stat.isDescription) {
-                li.classList.add('item-description');
-            } else {
-                li.textContent = stat.label + ': ';
-            }
-
-            li.appendChild(valueSpan);
-
-            renderStatNote(li, stat.note);
-            renderStatNote(li, stat.reasons);
-
-            if (stat.isHidden) {
-                li.classList.add('item-hidden-stat');
-            }
-
-            statsList.appendChild(li);
-        });
-    }
+    renderStatsList(statsList, stats, true);
 
     const levelWrap = card.querySelector('.item-required-level');
     const gradeWrap = card.querySelector('.item-grade');
@@ -3892,38 +3897,7 @@ function createCardCard(card, options = {}) {
         stateReason
     );
 
-    if (!stats.length) {
-        statsList.hidden = true;
-    } else {
-        statsList.textContent = '';
-
-        stats.forEach(stat => {
-            const li = document.createElement('li');
-
-            if (stat.isStateNotice) {
-                li.className = 'item-state-notice';
-                li.textContent = stat.value;
-                statsList.appendChild(li);
-                return;
-            }
-
-            const valueSpan = document.createElement('span');
-            valueSpan.className = 'item-stat-value';
-            valueSpan.textContent = stat.value;
-
-            li.textContent = stat.label + ': ';
-            li.appendChild(valueSpan);
-
-            renderStatNote(li, stat.note);
-            renderStatNote(li, stat.reasons);
-
-            if (stat.isHidden) {
-                li.classList.add('item-hidden-stat');
-            }
-
-            statsList.appendChild(li);
-        });
-    }
+    renderStatsList(statsList, stats);
 
     if (options.selected) {
         cardEl.classList.add('selected');
@@ -4505,31 +4479,7 @@ function createStampCard(variant, options = {}) {
             'Не участвует в расчётах: предмет не активен';
     }
     const stats = getStampStats(variant, context, stateReason);
-    if (!stats.length) {
-        statsList.hidden = true;
-    } else {
-        statsList.textContent = '';
-        stats.forEach(stat => {
-            const li = document.createElement('li');
-            if (stat.isStateNotice) {
-                li.className = 'item-state-notice';
-                li.textContent = stat.value;
-                statsList.appendChild(li);
-                return;
-            }
-            const valueSpan = document.createElement('span');
-            valueSpan.className = 'item-stat-value';
-            valueSpan.textContent = stat.value;
-            li.textContent = stat.label + ': ';
-            li.appendChild(valueSpan);
-            renderStatNote(li, stat.note);
-            renderStatNote(li, stat.reasons);
-            if (stat.isHidden) {
-                li.classList.add('item-hidden-stat');
-            }
-            statsList.appendChild(li);
-        });
-    }
+    renderStatsList(statsList, stats);
     if (options.selected) {
         cardEl.classList.add('selected');
     }
