@@ -714,10 +714,6 @@ function getReasonStatName(id) {
     return Number(id || 0) ? getStatName(Number(id)) : '';
 }
 
-function getReasonCardName(id) {
-    return Number(id || 0) ? getCardName(Number(id)) : '';
-}
-
 function reasonFeature(name) {
     return reason('feature', {
         name
@@ -1177,16 +1173,6 @@ function saveCurrentStateId() {
     storageSet(CURRENT_STATE_STORAGE_KEY, String(currentStateId));
 }
 
-function getCurrentStateName() {
-    if (!currentStateId) {
-        return '';
-    }
-
-    const state = STATES.get(currentStateId);
-
-    return state ? state.name : '';
-}
-
 function renderStateSelect() {
     if (!stateSelect) {
         return;
@@ -1342,10 +1328,6 @@ function parseSearchNumber(value) {
     const num = Number(raw);
 
     return Number.isFinite(num) ? num : null;
-}
-
-function isSearchOperator(token) {
-    return SEARCH_OPERATORS.has(String(token || ''));
 }
 
 function pushSearchCondition(terms, stat, operator, value) {
@@ -3028,8 +3010,12 @@ function getItemSearchText(item) {
     return [
         item.name || '',
         ...baseNames,
-        ...getItemSearchableStatNames(item),
+        ...getBonusSearchableStatNames(item),
     ].join(' ').toLowerCase();
+}
+
+function statSearchNames(nameRu, alias) {
+    return [nameRu, alias].filter(Boolean).map(name => String(name).toLowerCase());
 }
 
 function getItemSearchStats(item) {
@@ -3040,9 +3026,7 @@ function getItemSearchStats(item) {
         if (!display || display.numeric === undefined || display.numeric === null) {
             return;
         }
-        const names = [def.name_ru, def.alias]
-            .filter(Boolean)
-            .map(name => String(name).toLowerCase());
+        const names = statSearchNames(def.name_ru, def.alias);
         if (!names.length) {
             return;
         }
@@ -3073,12 +3057,7 @@ function getItemSearchStats(item) {
             return;
         }
 
-        const names = [
-                bonus.name_ru,
-                bonus.stat_alias,
-            ]
-            .filter(Boolean)
-            .map(name => String(name).toLowerCase());
+        const names = statSearchNames(bonus.name_ru, bonus.stat_alias);
 
         if (!names.length) {
             return;
@@ -3104,9 +3083,9 @@ function filterBySearch(entries, getText, getStats) {
     return entries.filter(entry => searchMatchesTerms(getText(entry), getStats(entry), parsed));
 }
 
-function getItemSearchableStatNames(item) {
+function getBonusSearchableStatNames(entity) {
     const names = [];
-    (item.bonuses || []).forEach(bonus => {
+    (entity.bonuses || []).forEach(bonus => {
         const baseValue = Number(bonus.value || 0);
         const hasValue = bonus.scaling_type === 'range' ?
             (baseValue !== 0 || Number(bonus.value_max || 0) !== 0) :
@@ -3598,7 +3577,7 @@ function getCardSearchText(card) {
         card.name || '',
         card.card_type_name || '',
         card.set && card.set.name ? card.set.name : '',
-        ...getCardSearchableStatNames(card),
+        ...getBonusSearchableStatNames(card),
     ].join(' ').toLowerCase();
 }
 
@@ -3649,12 +3628,7 @@ function getCardSearchStats(card) {
             return;
         }
 
-        const names = [
-                bonus.name_ru,
-                bonus.stat_alias,
-            ]
-            .filter(Boolean)
-            .map(name => String(name).toLowerCase());
+        const names = statSearchNames(bonus.name_ru, bonus.stat_alias);
 
         if (!names.length) {
             return;
@@ -3668,31 +3642,6 @@ function getCardSearchStats(card) {
     });
 
     return stats;
-}
-
-function getCardSearchableStatNames(card) {
-    const names = [];
-
-    (card.bonuses || []).forEach(bonus => {
-        const baseValue = Number(bonus.value || 0);
-        const isRange = bonus.scaling_type === 'range';
-
-        const hasBaseValue = isRange ?
-            (baseValue !== 0 || Number(bonus.value_max || 0) !== 0) :
-            baseValue !== 0;
-
-        if (hasBaseValue) {
-            names.push(bonus.name_ru);
-
-            const alias = String(bonus.stat_alias || '').trim();
-
-            if (alias !== '') {
-                names.push(alias);
-            }
-        }
-    });
-
-    return names;
 }
 
 function getCardSetId(card) {
@@ -4324,7 +4273,7 @@ function getStampSearchStats(variant) {
         if (!resolved.active) {
             return;
         }
-        const names = [bonus.name_ru, bonus.stat_alias].filter(Boolean).map(name => String(name).toLowerCase());
+        const names = statSearchNames(bonus.name_ru, bonus.stat_alias);
         if (names.length) {
             stats.push({
                 names,
@@ -5171,27 +5120,6 @@ function getItemTypeConditionText(conditions, mode) {
             ': ' + parts.join(', ');
     }
     return parts.join(', ');
-}
-
-function getMinUpgradeLevelForScaling(bonus) {
-    const type = String(bonus.scaling_type || 'none');
-    const step = Math.max(1, Number(bonus.scaling_step || 1));
-    const threshold = Math.max(0, Number(bonus.scaling_threshold || 0));
-
-    switch (type) {
-        case 'per_level':
-        case 'per_every_n_levels':
-            return step;
-
-        case 'per_level_above':
-            return threshold + step;
-
-        case 'once_above':
-            return threshold + 1;
-
-        default:
-            return null;
-    }
 }
 
 function computeSetNegativeMode(id, setStates) {
