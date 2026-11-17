@@ -44,6 +44,21 @@ function db(): PDO
     return $pdo ??= connect();
 }
 
+function render_item_type_conditions(string $mode, array $itemTypes, array $conditionRows): void
+{
+    ?>
+<div class="card-header"><h2>Условия по экипированным предметам</h2></div>
+<p class="muted">Например: характеристика активна, если экипировано минимум 2 кинжала.</p>
+<div class="grid">
+<div class="field"><label for="item_type_condition_mode">Режим условий</label>
+<select id="item_type_condition_mode" name="item_type_condition_mode" required>
+<option value="all"<?= selected($mode === 'all') ?>>Все условия (AND)</option>
+<option value="any"<?= selected($mode === 'any') ?>>Любое условие (OR)</option>
+</select></div>
+</div>
+<?php item_type_condition_block($itemTypes, $conditionRows);
+}
+
 function related_counts(PDO $pdo, array $ids, string $keyCol, array $map): array
 {
     $out = [];

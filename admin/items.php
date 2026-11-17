@@ -863,16 +863,7 @@ function item_bonus_conditions_page(string $action, array $menu): void
 </div>
 
 <div class="card">
-<div class="card-header"><h2>Условия по экипированным предметам</h2></div>
-<p class="muted">Например: характеристика активна, если экипировано минимум 2 кинжала.</p>
-<div class="grid">
-<div class="field"><label for="item_type_condition_mode">Режим условий</label>
-<select id="item_type_condition_mode" name="item_type_condition_mode" required>
-<option value="all"<?= selected($mode === 'all') ?>>Все условия (AND)</option>
-<option value="any"<?= selected($mode === 'any') ?>>Любое условие (OR)</option>
-</select></div>
-</div>
-<?php item_type_condition_block($itemTypes, $conditionRows); ?>
+<?php render_item_type_conditions($mode, $itemTypes, $conditionRows); ?>
 <div class="form-actions">
 <button type="submit" class="btn btn-primary"><?= admin_icon('check', 16) ?>Сохранить условия</button>
 <a href="<?= e(admin_url('item_form', ['id' => (int)$bonus['item_id']])) ?>" class="btn">Отмена</a>
