@@ -155,20 +155,11 @@ function card_cleanup_incompatible(PDO $pdo, int $cardId, array $typeIds, ?int $
 
 function cards_page_counts(PDO $pdo, array $ids): array
 {
-    $out = [];
-    if (!$ids) return $out;
-    $ph = implode(',', array_fill(0, count($ids), '?'));
-    $map = [
-        'types'   => "SELECT card_id, COUNT(*) c FROM card_allowed_item_types WHERE card_id IN ($ph) GROUP BY card_id",
-        'bonuses' => "SELECT card_id, COUNT(*) c FROM card_bonuses WHERE card_id IN ($ph) GROUP BY card_id",
-        'used'    => "SELECT card_id, COUNT(*) c FROM item_cards WHERE card_id IN ($ph) GROUP BY card_id",
-    ];
-    foreach ($map as $key => $sql) {
-        $st = $pdo->prepare($sql);
-        $st->execute($ids);
-        foreach ($st->fetchAll() as $r) $out[(int)$r['card_id']][$key] = (int)$r['c'];
-    }
-    return $out;
+    return related_counts($pdo, $ids, 'card_id', [
+        'types'   => "SELECT card_id, COUNT(*) c FROM card_allowed_item_types WHERE card_id IN ({ph}) GROUP BY card_id",
+        'bonuses' => "SELECT card_id, COUNT(*) c FROM card_bonuses WHERE card_id IN ({ph}) GROUP BY card_id",
+        'used'    => "SELECT card_id, COUNT(*) c FROM item_cards WHERE card_id IN ({ph}) GROUP BY card_id",
+    ]);
 }
 
 function cards_list_page(string $action, array $menu): void

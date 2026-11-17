@@ -19,22 +19,11 @@ switch ($action) {
 
 function items_page_counts(PDO $pdo, array $ids): array
 {
-    $out = [];
-    if (!$ids) return $out;
-    $ph = implode(',', array_fill(0, count($ids), '?'));
-    $map = [
-        'slots'   => "SELECT item_id, COUNT(*) c FROM item_slots WHERE item_id IN ($ph) GROUP BY item_id",
-        'classes' => "SELECT item_id, COUNT(*) c FROM item_classes WHERE item_id IN ($ph) GROUP BY item_id",
-        'bonuses' => "SELECT item_id, COUNT(*) c FROM item_bonuses WHERE item_id IN ($ph) GROUP BY item_id",
-    ];
-    foreach ($map as $key => $sql) {
-        $st = $pdo->prepare($sql);
-        $st->execute($ids);
-        foreach ($st->fetchAll() as $r) {
-            $out[(int)$r['item_id']][$key] = (int)$r['c'];
-        }
-    }
-    return $out;
+    return related_counts($pdo, $ids, 'item_id', [
+        'slots'   => "SELECT item_id, COUNT(*) c FROM item_slots WHERE item_id IN ({ph}) GROUP BY item_id",
+        'classes' => "SELECT item_id, COUNT(*) c FROM item_classes WHERE item_id IN ({ph}) GROUP BY item_id",
+        'bonuses' => "SELECT item_id, COUNT(*) c FROM item_bonuses WHERE item_id IN ({ph}) GROUP BY item_id",
+    ]);
 }
 
 function items_list_page(string $action, array $menu): void

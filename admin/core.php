@@ -44,6 +44,21 @@ function db(): PDO
     return $pdo ??= connect();
 }
 
+function related_counts(PDO $pdo, array $ids, string $keyCol, array $map): array
+{
+    $out = [];
+    if (!$ids) return $out;
+    $ph = implode(',', array_fill(0, count($ids), '?'));
+    foreach ($map as $key => $sql) {
+        $st = $pdo->prepare(str_replace('{ph}', $ph, $sql));
+        $st->execute($ids);
+        foreach ($st->fetchAll() as $r) {
+            $out[(int)$r[$keyCol]][$key] = (int)$r['c'];
+        }
+    }
+    return $out;
+}
+
 function e($value): string
 {
     return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');

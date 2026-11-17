@@ -41,23 +41,12 @@ function stamp_color_badge(array $color): string
 
 function stamp_page_counts(PDO $pdo, array $ids): array
 {
-    $out = [];
-    if (!$ids) return $out;
-    $ph = implode(',', array_fill(0, count($ids), '?'));
-    $map = [
-        'types'    => "SELECT stamp_id, COUNT(*) c FROM stamp_allowed_item_types WHERE stamp_id IN ($ph) GROUP BY stamp_id",
-        'classes'  => "SELECT stamp_id, COUNT(*) c FROM stamp_class_restrictions WHERE stamp_id IN ($ph) GROUP BY stamp_id",
-        'variants' => "SELECT stamp_id, COUNT(*) c FROM stamp_variants WHERE stamp_id IN ($ph) GROUP BY stamp_id",
-        'used'     => "SELECT v.stamp_id, COUNT(*) c FROM item_stamps i JOIN stamp_variants v ON v.id = i.stamp_variant_id WHERE v.stamp_id IN ($ph) GROUP BY v.stamp_id",
-    ];
-    foreach ($map as $key => $sql) {
-        $st = $pdo->prepare($sql);
-        $st->execute($ids);
-        foreach ($st->fetchAll() as $row) {
-            $out[(int)$row['stamp_id']][$key] = (int)$row['c'];
-        }
-    }
-    return $out;
+    return related_counts($pdo, $ids, 'stamp_id', [
+        'types'    => "SELECT stamp_id, COUNT(*) c FROM stamp_allowed_item_types WHERE stamp_id IN ({ph}) GROUP BY stamp_id",
+        'classes'  => "SELECT stamp_id, COUNT(*) c FROM stamp_class_restrictions WHERE stamp_id IN ({ph}) GROUP BY stamp_id",
+        'variants' => "SELECT stamp_id, COUNT(*) c FROM stamp_variants WHERE stamp_id IN ({ph}) GROUP BY stamp_id",
+        'used'     => "SELECT v.stamp_id, COUNT(*) c FROM item_stamps i JOIN stamp_variants v ON v.id = i.stamp_variant_id WHERE v.stamp_id IN ({ph}) GROUP BY v.stamp_id",
+    ]);
 }
 
 /** Варианты, применимые к типу предмета. Пустой список типов = без ограничения. */
