@@ -190,8 +190,24 @@ function pruneDeletedUserSelections() {
     }
 }
 
-function getKnownCardIdsForCalc() {
-    return new Set(collectActiveEquippedCardIds());
+/* Один проход по экипировке: id карты -> количество активных копий.
+   Из него же получаем множество известных карт — второй проход не нужен. */
+function computeEquippedCardCounts() {
+    const counts = new Map();
+
+    forEachActiveEquippedCard(card => {
+        const id = equippedEntityId(card);
+
+        if (id) {
+            counts.set(id, (counts.get(id) || 0) + 1);
+        }
+    });
+
+    return counts;
+}
+
+function getKnownCardIdsForCalc(cardCounts = null) {
+    return new Set((cardCounts || computeEquippedCardCounts()).keys());
 }
 
 function getEquippedIdenticalCardCount(cardId) {
@@ -201,15 +217,16 @@ function getEquippedIdenticalCardCount(cardId) {
         return 0;
     }
 
-    let count = 0;
-
-    forEachActiveEquippedCard(card => {
-        if (Number(card && card.id ? card.id : 0) === id) {
-            count++;
+    // В пределах одного рендера считаем один раз (как getEquippedItemTypeCounts).
+    if (uiContext) {
+        if (!uiContext.cardCounts) {
+            uiContext.cardCounts = computeEquippedCardCounts();
         }
-    });
 
-    return count;
+        return Number(uiContext.cardCounts.get(id) || 0);
+    }
+
+    return Number(computeEquippedCardCounts().get(id) || 0);
 }
 
 function computeSetStates() {
@@ -289,7 +306,8 @@ function collectCandidateBonuses(setStates) {
     const candidates = [];
 
     const equippedItemTypeCounts = getEquippedItemTypeCounts();
-    const knownCardIds = getKnownCardIdsForCalc();
+    const equippedCardCounts = computeEquippedCardCounts();
+    const knownCardIds = getKnownCardIdsForCalc(equippedCardCounts);
 
     Object.values(equipment || {}).forEach(savedItem => {
         if (!isSavedItemActiveForCalc(savedItem)) {
@@ -393,6 +411,7 @@ function collectCandidateBonuses(setStates) {
                         hostItemId: itemId,
                         equippedItemTypeCounts,
                         knownCardIds,
+                        identicalCardCounts: equippedCardCounts,
                         setNegativeMode,
                     },
                 });

@@ -234,6 +234,7 @@ function beginUiContext() {
     uiContext = {
         counts: null,
         cardIds: null,
+        cardCounts: null,
         setModes: new Map()
     };
 }

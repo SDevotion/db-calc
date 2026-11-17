@@ -332,9 +332,12 @@ function resolveBonus(bonus, context, options = {}) {
         const required = Math.max(1, Number(bonus.scaling_required_count || 1));
         const multiplier = numericOrNull(bonus.scaling_multiplier);
 
-        const count = context.cardId && typeof window.getEquippedIdenticalCardCount === 'function' ?
-            Number(window.getEquippedIdenticalCardCount(context.cardId) || 0) :
-            0;
+        // Готовая карта счётчиков из расчёта; иначе — кэш на рендер внутри функции.
+        const count = context.identicalCardCounts instanceof Map ?
+            Number(context.identicalCardCounts.get(Number(context.cardId || 0)) || 0) :
+            (context.cardId && typeof window.getEquippedIdenticalCardCount === 'function' ?
+                Number(window.getEquippedIdenticalCardCount(context.cardId) || 0) :
+                0);
 
         if (multiplier !== null && count >= required) {
             value = value * multiplier;
