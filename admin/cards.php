@@ -57,16 +57,7 @@ function posted_override_rows(): array
 
 function posted_stat_source_rows(): array
 {
-    $ids   = (array)($_POST['stat_source_stat'] ?? []);
-    $steps = (array)($_POST['stat_source_step'] ?? []);
-    $rows = [];
-    for ($i = 0, $n = max(count($ids), count($steps)); $i < $n; $i++) {
-        $sid  = (int)($ids[$i] ?? 0);
-        $step = (int)($steps[$i] ?? 0);
-        if ($sid <= 0 && $step <= 0) continue;
-        $rows[] = ['stat_id' => $sid, 'step' => $step];
-    }
-    return $rows;
+    return posted_int_pairs('stat_source_stat', 'stat_source_step', 'stat_id', 'step');
 }
 
 function read_stat_sources(array $statsById): array
@@ -985,10 +976,10 @@ function card_bonuses_page(string $action, array $menu): void
 <div class="field"><label for="value_type">Тип значения</label>
 <select id="value_type" name="value_type" required><?= enum_select('value_type', 'card', (string)$values['value_type']) ?></select></div>
 <div class="field"><label for="feature_id">Функция</label>
-<select id="feature_id" name="feature_id"><?= feature_options($features, intOrNull($values['feature_id'])) ?></select>
+<select id="feature_id" name="feature_id"><?= id_options($features, intOrNull($values['feature_id'])) ?></select>
 <div class="form-help">Характеристика активна только когда функция включена.</div></div>
 <div class="field"><label for="text_note_id">Доп. текст</label>
-<select id="text_note_id" name="text_note_id"><?= text_note_options($notes, intOrNull($values['text_note_id'])) ?></select>
+<select id="text_note_id" name="text_note_id"><?= id_options($notes, intOrNull($values['text_note_id']), 'title', '— нет —') ?></select>
 <div class="form-help">Показывается вместо текста «Зависит от…», когда условие выполнено.</div></div>
 <div class="field"><label for="state_id">Состояние</label>
 <select id="state_id" name="state_id"<?= $states ? '' : ' disabled' ?>><?= state_options($states, intOrNull($values['state_id'])) ?></select></div>

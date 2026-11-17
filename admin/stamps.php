@@ -24,15 +24,6 @@ function stamp_color_map(PDO $pdo): array
     return $out;
 }
 
-function stamp_color_options(array $colors): array
-{
-    $out = [];
-    foreach ($colors as $id => $row) {
-        $out[$id] = (string)$row['name'];
-    }
-    return $out;
-}
-
 function stamp_color_badge(array $color): string
 {
     return '<span class="badge" style="background:' . e($color['hex']) . '22;color:' . e($color['hex']) . '">'
@@ -73,24 +64,6 @@ function stamp_stat_coefs(array $row, string $valueType): array
         return [(float)$row['stamp_percent_min_coef'], (float)$row['stamp_percent_max_coef']];
     }
     return [(float)$row['stamp_flat_min_coef'], (float)$row['stamp_flat_max_coef']];
-}
-
-/** Селект характеристик с коэффициентами в data-атрибутах (для подсказки в форме). */
-function stamp_stat_options(array $stats, int $selectedId = 0): string
-{
-    $html = '<option value="0"' . selected($selectedId === 0) . '>— выбрать —</option>';
-    foreach ($stats as $s) {
-        $id = (int)$s['id'];
-        $html .= '<option value="' . $id . '"'
-            . ' data-flat="' . (int)$s['supports_flat'] . '"'
-            . ' data-percent="' . (int)$s['supports_percent'] . '"'
-            . ' data-flat-min="' . e($s['stamp_flat_min_coef']) . '"'
-            . ' data-flat-max="' . e($s['stamp_flat_max_coef']) . '"'
-            . ' data-percent-min="' . e($s['stamp_percent_min_coef']) . '"'
-            . ' data-percent-max="' . e($s['stamp_percent_max_coef']) . '"'
-            . selected($selectedId === $id) . '>' . e($s['name_ru']) . '</option>';
-    }
-    return $html;
 }
 
 /* ======================= Подбор качества по максимуму ======================= */
@@ -778,7 +751,7 @@ function stamp_bonuses_page(string $action, array $menu): void
             </div>
             <div class="grid">
                 <div class="field"><label for="stat_id">Характеристика</label>
-                    <select id="stat_id" name="stat_id" required><?= stamp_stat_options($stats, (int)$values['stat_id']) ?></select></div>
+                    <select id="stat_id" name="stat_id" required><?= stat_options($stats, (int)$values['stat_id']) ?></select></div>
                 <div class="field"><label for="display_value">Значение на уровне <?= $refLevel ?></label>
                     <input type="number" id="display_value" name="display_value" step="1" required value="<?= e($values['display_value']) ?>">
                     <div class="form-help">Максимум для этого цвета. Сервер сам подберёт целое качество (quality_value).</div>
@@ -786,10 +759,10 @@ function stamp_bonuses_page(string $action, array $menu): void
                 <div class="field"><label for="value_type">Тип значения</label>
                     <select id="value_type" name="value_type" required><?= enum_select('value_type', 'card', (string)$values['value_type']) ?></select></div>
                 <div class="field"><label for="feature_id">Функция</label>
-                    <select id="feature_id" name="feature_id"><?= feature_options($features, intOrNull($values['feature_id'])) ?></select>
+                    <select id="feature_id" name="feature_id"><?= id_options($features, intOrNull($values['feature_id'])) ?></select>
                     <div class="form-help">Характеристика активна только когда функция включена.</div></div>
                 <div class="field"><label for="text_note_id">Доп. текст</label>
-                    <select id="text_note_id" name="text_note_id"><?= text_note_options($notes, intOrNull($values['text_note_id'])) ?></select></div>
+                    <select id="text_note_id" name="text_note_id"><?= id_options($notes, intOrNull($values['text_note_id']), 'title', '— нет —') ?></select></div>
                 <div class="field"><label for="state_id">Состояние</label>
                     <select id="state_id" name="state_id"<?= $states ? '' : ' disabled' ?>><?= state_options($states, intOrNull($values['state_id'])) ?></select></div>
                 <div class="field"><label for="sort_order">Порядок</label>

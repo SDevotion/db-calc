@@ -15,13 +15,8 @@ $menu = admin_menu();
 
 function admin_scalar(PDO $pdo, string $sql, array $params = []): int
 {
-    try {
-        $st = $pdo->prepare($sql);
-        $st->execute($params);
-        return (int)$st->fetchColumn();
-    } catch (Throwable $e) {
-        return 0;
-    }
+    $rows = admin_rows_safe($pdo, $sql, $params);
+    return $rows ? (int)reset($rows[0]) : 0;
 }
 
 function admin_rows_safe(PDO $pdo, string $sql, array $params = []): array
@@ -42,15 +37,6 @@ function admin_stat_tile(string $label, int $value, string $tone = ''): void
         . '<div class="admin-stat-label">' . e($label) . '</div>'
         . '<div class="admin-stat-value">' . $value . '</div>'
         . '</div>';
-}
-
-function admin_stat_grid(array $tiles): void
-{
-    echo '<div class="admin-stat-grid">';
-    foreach ($tiles as $tile) {
-        admin_stat_tile($tile[0], (int)$tile[1], (string)($tile[2] ?? ''));
-    }
-    echo '</div>';
 }
 
 /** Счётчики всех справочников — чистая статистика наполненности. */

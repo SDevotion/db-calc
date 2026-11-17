@@ -207,15 +207,6 @@ function restriction_labels(): array
     return enum_rows('restriction');
 }
 
-function restriction_options(string $selectedValue = 'allowed'): string
-{
-    $html = '';
-    foreach (restriction_labels() as $value => $label) {
-        $html .= '<option value="' . e($value) . '"' . selected($selectedValue === $value) . '>' . e($label) . '</option>';
-    }
-    return $html;
-}
-
 function enum_select(
     string $group,
     string $scope = '',
@@ -235,28 +226,26 @@ function stat_options(array $stats, int $selectedId = 0): string
 {
     $html = '<option value="0"' . selected($selectedId === 0) . '>— выбрать —</option>';
     foreach ($stats as $s) {
-        $html .= '<option value="' . (int)$s['id'] . '"'
+        $id = (int)$s['id'];
+        $html .= '<option value="' . $id . '"'
             . ' data-flat="' . (int)$s['supports_flat'] . '"'
-            . ' data-percent="' . (int)$s['supports_percent'] . '"'
-            . selected($selectedId === (int)$s['id']) . '>' . e($s['name_ru']) . '</option>';
+            . ' data-percent="' . (int)$s['supports_percent'] . '"';
+        if (isset($s['stamp_flat_min_coef'])) {
+            $html .= ' data-flat-min="' . e($s['stamp_flat_min_coef']) . '"'
+                . ' data-flat-max="' . e($s['stamp_flat_max_coef']) . '"'
+                . ' data-percent-min="' . e($s['stamp_percent_min_coef']) . '"'
+                . ' data-percent-max="' . e($s['stamp_percent_max_coef']) . '"';
+        }
+        $html .= selected($selectedId === $id) . '>' . e($s['name_ru']) . '</option>';
     }
     return $html;
 }
 
-function feature_options(array $features, ?int $selectedId = null): string
+function id_options(array $rows, ?int $selectedId = null, string $labelField = 'name', string $emptyLabel = 'нет'): string
 {
-    $html = '<option value=""' . selected($selectedId === null) . '>нет</option>';
-    foreach ($features as $f) {
-        $html .= '<option value="' . (int)$f['id'] . '"' . selected($selectedId === (int)$f['id']) . '>' . e($f['name']) . '</option>';
-    }
-    return $html;
-}
-
-function text_note_options(array $notes, ?int $selectedId = null): string
-{
-    $html = '<option value=""' . selected($selectedId === null) . '>— нет —</option>';
-    foreach ($notes as $n) {
-        $html .= '<option value="' . (int)$n['id'] . '"' . selected($selectedId === (int)$n['id']) . '>' . e($n['title']) . '</option>';
+    $html = '<option value=""' . selected($selectedId === null) . '>' . e($emptyLabel) . '</option>';
+    foreach ($rows as $row) {
+        $html .= '<option value="' . (int)$row['id'] . '"' . selected($selectedId === (int)$row['id']) . '>' . e($row[$labelField]) . '</option>';
     }
     return $html;
 }
@@ -378,17 +367,10 @@ function is_generated_column(PDO $pdo, string $table, string $column): bool
     return $cache[$key];
 }
 
-function assert_row_exists(PDO $pdo, string $table, int $id, string $message): void
+function assert_row_exists(PDO $pdo, string $table, int $id, string $message, string $extraWhere = ''): void
 {
-    $st = $pdo->prepare("SELECT COUNT(*) FROM `$table` WHERE id = ?");
+    $st = $pdo->prepare("SELECT COUNT(*) FROM `$table` WHERE id = ?" . ($extraWhere !== '' ? ' ' . $extraWhere : ''));
     $st->execute([$id]);
-    if (!(int)$st->fetchColumn()) throw new RuntimeException($message);
-}
-
-function assert_bonus_stat(PDO $pdo, int $statId, string $message): void
-{
-    $st = $pdo->prepare('SELECT COUNT(*) FROM stats WHERE id = ? AND is_base = 0');
-    $st->execute([$statId]);
     if (!(int)$st->fetchColumn()) throw new RuntimeException($message);
 }
 
@@ -504,21 +486,16 @@ function read_condition_mode(): string
 
 function read_item_type_conditions(PDO $pdo): array
 {
-    $typeIds = (array)($_POST['condition_item_type_id'] ?? []);
-    $counts  = (array)($_POST['condition_required_count'] ?? []);
-    $n = max(count($typeIds), count($counts));
-    $rows = [];
+    $rows = posted_condition_rows();
     $seen = [];
     $maxItems = slot_count();
-    for ($i = 0; $i < $n; $i++) {
-        $tid = (int)($typeIds[$i] ?? 0);
-        $cnt = (int)($counts[$i] ?? 0);
-        if ($tid <= 0 && $cnt <= 0) continue;
+    foreach ($rows as $r) {
+        $tid = $r['item_type_id'];
+        $cnt = $r['required_count'];
         if ($tid <= 0) throw new RuntimeException('Выберите тип предмета для условия.');
         if ($cnt < 1 || $cnt > $maxItems) throw new RuntimeException('Количество предметов должно быть от 1 до ' . $maxItems . '.');
         if (isset($seen[$tid])) throw new RuntimeException('Один тип предмета не может быть указан в условиях дважды.');
         $seen[$tid] = true;
-        $rows[] = ['item_type_id' => $tid, 'required_count' => $cnt];
     }
     if ($rows) {
         $ids = array_column($rows, 'item_type_id');
@@ -531,18 +508,23 @@ function read_item_type_conditions(PDO $pdo): array
     return $rows;
 }
 
-function posted_condition_rows(): array
+function posted_int_pairs(string $idField, string $numField, string $idKey, string $numKey): array
 {
-    $typeIds = (array)($_POST['condition_item_type_id'] ?? []);
-    $counts  = (array)($_POST['condition_required_count'] ?? []);
+    $ids  = (array)($_POST[$idField] ?? []);
+    $nums = (array)($_POST[$numField] ?? []);
     $rows = [];
-    for ($i = 0, $n = max(count($typeIds), count($counts)); $i < $n; $i++) {
-        $tid = (int)($typeIds[$i] ?? 0);
-        $cnt = (int)($counts[$i] ?? 0);
-        if ($tid <= 0 && $cnt <= 0) continue;
-        $rows[] = ['item_type_id' => $tid, 'required_count' => $cnt];
+    for ($i = 0, $n = max(count($ids), count($nums)); $i < $n; $i++) {
+        $id  = (int)($ids[$i] ?? 0);
+        $num = (int)($nums[$i] ?? 0);
+        if ($id <= 0 && $num <= 0) continue;
+        $rows[] = [$idKey => $id, $numKey => $num];
     }
     return $rows;
+}
+
+function posted_condition_rows(): array
+{
+    return posted_int_pairs('condition_item_type_id', 'condition_required_count', 'item_type_id', 'required_count');
 }
 
 /* ---------- Иконки ---------- */

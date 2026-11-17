@@ -215,8 +215,8 @@ function item_bonus_row(array $row, array $stats, array $features, array $notes,
 <select name="bonus_stat[]" class="js-stat-select"><?= stat_options($stats, (int)($row['stat_id'] ?? 0)) ?></select></td>
 <td><input type="number" step="0.01" name="bonus_value[]" value="<?= e($row['value'] ?? '') ?>"></td>
 <td><select name="bonus_type[]"><?= enum_select('value_type', 'item', (string)($row['value_type'] ?? 'flat')) ?></select></td>
-<td><select name="bonus_feature[]"><?= feature_options($features, intOrNull($row['feature_id'] ?? null)) ?></select></td>
-<td><select name="bonus_text_note[]"><?= text_note_options($notes, intOrNull($row['text_note_id'] ?? null)) ?></select></td>
+<td><select name="bonus_feature[]"><?= id_options($features, intOrNull($row['feature_id'] ?? null)) ?></select></td>
+<td><select name="bonus_text_note[]"><?= id_options($notes, intOrNull($row['text_note_id'] ?? null), 'title', '— нет —') ?></select></td>
 <td><select name="bonus_state[]"<?= $states ? '' : ' disabled' ?>><?= state_options($states, intOrNull($row['state_id'] ?? null)) ?></select></td>
 <td class="bonus-actions">
 <?php if (!$isTemplate && $rowId > 0): ?>
@@ -586,7 +586,7 @@ function item_form_page(string $action, array $menu): void
 <div class="field field-wide"><label for="description"><?= e(base_stat_label('description', 'Описание')) ?></label>
 <input type="text" id="description" name="description" maxlength="500" value="<?= e($values['description']) ?>" placeholder="Необязательное текстовое описание предмета"></div>
 <div class="field"><label for="description_feature_id">Функция описания</label>
-<select id="description_feature_id" name="description_feature_id"><?= feature_options($features, intOrNull($values['description_feature_id'])) ?></select>
+<select id="description_feature_id" name="description_feature_id"><?= id_options($features, intOrNull($values['description_feature_id'])) ?></select>
 <div class="form-help">Описание показывается только когда функция включена.</div></div>
 </div>
 </div>
@@ -718,7 +718,7 @@ function item_bonus_conditions_page(string $action, array $menu): void
 
             if (in_array($type, ['per_stat', 'stat_threshold'], true)) {
                 if ($sourceId === null || $sourceId <= 0) throw new RuntimeException('Выберите характеристику-источник.');
-                assert_bonus_stat($pdo, $sourceId, 'Характеристика-источник не найдена.');
+                assert_row_exists($pdo, 'stats', $sourceId, 'Характеристика-источник не найдена.', 'AND is_base = 0');
                 if ($type === 'per_stat') {
                     if ($statStep === null || $statStep < 1) throw new RuntimeException('Шаг характеристики-источника должен быть больше нуля.');
                     $statThreshold = null;
