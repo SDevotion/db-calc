@@ -44,6 +44,24 @@ function db(): PDO
     return $pdo ??= connect();
 }
 
+function render_bonus_conditions(array $b, array $bClasses, array $bConditions, array $classNames, array $typeNames, ?array $bRestrictions = null): void
+{
+    $parts = [];
+    $parts[] = 'Классы: ' . ($bClasses ? implode(', ', array_map(static fn($id) => $classNames[$id] ?? ('#' . $id), $bClasses)) : 'все');
+    if ($bRestrictions !== null) {
+        $parts[] = 'Активна в типах: ' . ($bRestrictions ? implode(', ', array_map(static fn($id) => $typeNames[$id] ?? ('#' . $id), $bRestrictions)) : 'все разрешённые');
+    }
+    if ($bConditions) {
+        $parts[] = 'Экипировка (' . ($b['item_type_condition_mode'] === 'any' ? 'любое' : 'все') . '): '
+            . implode(', ', array_map(static function ($c) use ($typeNames) {
+                return ($typeNames[(int)$c['item_type_id']] ?? ('#' . $c['item_type_id'])) . ' >= ' . (int)$c['required_count'];
+            }, $bConditions));
+    }
+    echo '<ul class="condition-list">';
+    foreach ($parts as $p) echo '<li>' . e($p) . '</li>';
+    echo '</ul>';
+}
+
 function render_item_type_conditions(string $mode, array $itemTypes, array $conditionRows): void
 {
     ?>

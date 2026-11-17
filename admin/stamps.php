@@ -839,17 +839,7 @@ function stamp_bonuses_page(string $action, array $menu): void
                     <td><?= e($b['state_name'] ?? '—') ?></td>
                     <td>
                         <?php
-                        $parts = [];
-                        $parts[] = 'Классы: ' . ($bClasses ? implode(', ', array_map(static fn($id) => $classNames[$id] ?? ('#' . $id), $bClasses)) : 'все');
-                        if ($bConditions) {
-                            $parts[] = 'Экипировка (' . ($b['item_type_condition_mode'] === 'any' ? 'любое' : 'все') . '): '
-                                . implode(', ', array_map(static function ($c) use ($typeNames) {
-                                    return ($typeNames[(int)$c['item_type_id']] ?? ('#' . $c['item_type_id'])) . ' >= ' . (int)$c['required_count'];
-                                }, $bConditions));
-                        }
-                        echo '<ul class="condition-list">';
-                        foreach ($parts as $p) echo '<li>' . e($p) . '</li>';
-                        echo '</ul>';
+                        render_bonus_conditions($b, $bClasses, $bConditions, $classNames, $typeNames);
                         ?>
                     </td>
                     <td><?= (int)$b['sort_order'] ?></td>
