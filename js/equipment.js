@@ -511,8 +511,11 @@ let characterChangeToken = 0;
 async function onCharacterChange() {
     saveCharacterSelection();
     const token = ++characterChangeToken;
-    await validateEquipment();
-    await loadSlotTypes();
+    // Валидация и типы ячеек независимы — ждём оба запроса параллельно.
+    await Promise.all([
+        validateEquipment(),
+        loadSlotTypes(),
+    ]);
     if (token !== characterChangeToken) {
         return;
     }
