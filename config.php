@@ -325,7 +325,12 @@ function api_cache_set(string $key, string $json): void
 
 function api_cache_clear(): void
 {
-    foreach (glob(api_cache_dir() . '/*.json') ?: [] as $file) {
+    // Чистим и осиротевшие .tmp от прерванных записей.
+    $files = array_merge(
+        glob(api_cache_dir() . '/*.json') ?: [],
+        glob(api_cache_dir() . '/*.tmp') ?: []
+    );
+    foreach ($files as $file) {
         @unlink($file);
     }
 }
