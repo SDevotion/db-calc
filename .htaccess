@@ -12,13 +12,15 @@
   AddOutputFilterByType DEFLATE application/json text/html text/css text/plain application/javascript text/javascript image/svg+xml
 </IfModule>
 
-# Кэш статики: иконки меняются редко; js/css пока без версий (?v=) —
-# короткий max-age, чтобы правки подхватывались в течение часа.
+# Кэш статики. Иконки меняются редко — кэшируем надолго.
+# js/css без версий (?v=): no-cache = браузер каждый раз проверяет
+# ETag/Last-Modified (304, если файл не менялся) и сразу видит правки
+# после деплоя — без часового окна устаревания.
 <IfModule mod_headers.c>
   <FilesMatch "\.(ico|png|jpe?g|gif|svg|webp)$">
     Header set Cache-Control "public, max-age=604800"
   </FilesMatch>
   <FilesMatch "\.(css|js)$">
-    Header set Cache-Control "public, max-age=3600"
+    Header set Cache-Control "no-cache"
   </FilesMatch>
 </IfModule>
