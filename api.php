@@ -671,20 +671,60 @@ function api_cacheable_actions(): array
     return array_merge(api_bootstrap_actions(), [
         'bootstrap', 'card_types', 'text_notes', 'items', 'cards',
         'items_by_ids', 'cards_by_ids', 'item_cards', 'equipment_cards', 'slot_types',
+        'stamps_by_ids', 'item_stamps', 'equipment_stamps',
     ]);
 }
 
 function api_cache_key(string $action): ?string
 {
-    // Кэшируем только справочники и bootstrap; items/cards/slot_types/by_ids — динамические.
-    if (!in_array($action, array_merge(api_bootstrap_actions(), ['bootstrap', 'card_types', 'text_notes']), true)) {
+    // Данные меняются только через админку, а любой её POST сбрасывает кэш
+    // (admin/core.php). Поэтому кэшируем всё, ключ учитывает параметры запроса.
+    if (!in_array($action, api_cacheable_actions(), true)) {
         return null;
     }
+
+    $intParam = static function (string $key): string {
+        $raw = (string)($_GET[$key] ?? '');
+        return $raw === '' ? '' : (string)(int)$raw;
+    };
+
     $params = [];
-    if ($action === 'stamps') {
-        $raw = (string)($_GET['item_type_id'] ?? '');
-        $params['item_type_id'] = $raw === '' ? '' : (string)(int)$raw;
+    switch ($action) {
+        case 'stamps':
+            $params['item_type_id'] = $intParam('item_type_id');
+            break;
+        case 'cards':
+            $params['card_type_id'] = $intParam('card_type_id');
+            $params['set_id'] = $intParam('set_id');
+            $params['item_type_id'] = $intParam('item_type_id');
+            break;
+        case 'items':
+            $params['slot'] = (int)($_GET['slot'] ?? 0);
+            // проваливаемся: items использует и параметры персонажа
+        case 'slot_types':
+            $params['gender'] = (string)($_GET['gender'] ?? '');
+            $params['class_id'] = (int)($_GET['class_id'] ?? 0);
+            $params['level'] = (int)($_GET['level'] ?? 0);
+            break;
+        case 'items_by_ids':
+        case 'cards_by_ids':
+        case 'stamps_by_ids':
+            $ids = normalize_id_list($_GET['ids'] ?? '');
+            sort($ids);
+            $params['ids'] = $ids;
+            break;
+        case 'equipment_cards':
+        case 'equipment_stamps':
+            $ids = normalize_id_list($_GET['item_ids'] ?? $_GET['ids'] ?? '');
+            sort($ids);
+            $params['item_ids'] = $ids;
+            break;
+        case 'item_cards':
+        case 'item_stamps':
+            $params['item_id'] = (int)($_GET['item_id'] ?? 0);
+            break;
     }
+
     return $action . '_' . md5(json_encode($params));
 }
 
