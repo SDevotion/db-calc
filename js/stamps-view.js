@@ -216,13 +216,12 @@ function filterStampGroupsBySearch(groups, state) {
     });
 }
 
-function createStampCard(variant, options = {}) {
+function createStampElement(variant) {
     const template = document.getElementById('item-card-template');
     const cardEl = template.content.firstElementChild.cloneNode(true);
     cardEl.querySelector('.item-icon-wrap')?.remove();
     cardEl.querySelector('.item-icon')?.remove();
     cardEl.querySelector('.item-icon-fallback')?.remove();
-    const statsList = cardEl.querySelector('.item-stats');
     cardEl.querySelector('.item-name').textContent = variant.name;
     const typeEl = cardEl.querySelector('.item-type');
     typeEl.textContent = '';
@@ -235,27 +234,59 @@ function createStampCard(variant, options = {}) {
     colorWrap.appendChild(document.createTextNode(variant.color_name || ''));
     typeEl.appendChild(colorWrap);
     cardEl.querySelector('.item-footer')?.remove();
-    const context = getStampContext();
+    return cardEl;
+}
+
+function updateStampElement(cardEl, variant, options) {
+    const context = options.context;
     let stateReason = '';
     if (!context.hostItemActive) {
         stateReason = context.hostItemStateId ?
             getStateInactiveReason(context.hostItemStateId) :
             'Не участвует в расчётах: предмет не активен';
     }
-    const stats = getStampStats(variant, context, stateReason);
-    renderStatsList(statsList, stats);
-    if (options.selected) {
-        cardEl.classList.add('selected');
+    renderStatsList(cardEl.querySelector('.item-stats'), getStampStats(variant, context, stateReason));
+    cardEl.classList.toggle('selected', Boolean(options.selected));
+    cardEl.classList.toggle('item-inactive', !context.hostItemActive);
+}
+
+const syncStampGrid = createCardGridCache(createStampElement, updateStampElement);
+let stampsGridEl = null;
+
+function getStampGridContextSignature(context) {
+    return [
+        currentStateId,
+        getSelectedClassId(),
+        Array.from(enabledFeatureCheckboxIds).sort().join(','),
+        Array.from(getKnownEquippedCardIds()).sort((a, b) => a - b).join(','),
+        mapSignature(CALC_STATE.totals),
+        mapSignature(getEquippedItemTypeCounts()),
+        context.itemTypeId,
+        context.internalLevel,
+        context.upgradeLevel,
+        context.hostItemActive ? 1 : 0,
+        context.hostItemStateId ?? '',
+    ].join('|');
+}
+
+function appendStampGrid(container, variants, context, options = {}) {
+    if (!variants.length) {
+        return;
     }
-    if (!context.hostItemActive) {
-        cardEl.classList.add('item-inactive');
+    if (!stampsGridEl) {
+        stampsGridEl = document.createElement('div');
+        stampsGridEl.className = 'item-grid';
     }
-    if (options.selectable && typeof options.onClick === 'function') {
-        cardEl.addEventListener('click', () => options.onClick(variant));
-    } else {
-        cardEl.disabled = true;
-    }
-    return cardEl;
+    const selectedId = options.selectedId !== undefined && options.selectedId !== null ?
+        Number(options.selectedId) :
+        null;
+    syncStampGrid(stampsGridEl, variants, getStampGridContextSignature(context), variant => ({
+        context,
+        selectable: options.selectable,
+        onClick: options.onClick,
+        selected: selectedId !== null && Number(variant.id) === selectedId,
+    }));
+    container.appendChild(stampsGridEl);
 }
 
 function renderStampPanel() {
@@ -343,13 +374,10 @@ function renderStampsTab() {
     renderStampColorSelect(groups, state);
     if (state.locked) {
         if (state.variant) {
-            const grid = document.createElement('div');
-            grid.className = 'item-grid';
-            grid.appendChild(createStampCard(state.variant, {
-                selected: true,
-                selectable: false
-            }));
-            modalCenter.appendChild(grid);
+            appendStampGrid(modalCenter, [state.variant], getStampContext(), {
+                selectedId: Number(state.variant.id),
+                selectable: false,
+            });
         } else {
             const empty = document.createElement('div');
             empty.className = 'empty';
@@ -372,18 +400,16 @@ function renderStampsTab() {
         updateModalTabs();
         return;
     }
-    const selectedId = state.variant ? Number(state.variant.id) : null;
-    const grid = document.createElement('div');
-    grid.className = 'item-grid';
-    filtered.forEach(group => {
-        const variant = resolveStampGroupVariant(group, state);
-        grid.appendChild(createStampCard(variant, {
+    appendStampGrid(
+        modalCenter,
+        filtered.map(group => resolveStampGroupVariant(group, state)),
+        getStampContext(),
+        {
+            selectedId: state.variant ? Number(state.variant.id) : null,
             selectable: true,
-            selected: selectedId !== null && Number(variant.id) === selectedId,
             onClick: selectStampVariant,
-        }));
-    });
-    modalCenter.appendChild(grid);
+        }
+    );
     renderSockets();
     updateModalTabs();
     scrollSelectedIntoView();

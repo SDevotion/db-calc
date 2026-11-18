@@ -701,3 +701,54 @@ function renderStatNote(parent, note) {
     parent.appendChild(span);
 }
 
+/* --- Общий кэш DOM-карточек (вкладки карт и печатей) --- */
+// Ключ — объект сущности: запись живёт, пока объект есть в кэше данных.
+// createElement — статичная структура (один раз на объект),
+// updateElement — динамика (только при смене сигнатуры).
+// Клик-листенер стабильный: текущий обработчик берётся из entry.
+function createCardGridCache(createElement, updateElement) {
+    const cache = new WeakMap();
+
+    return function syncCardGrid(grid, entities, contextSignature, optionsFor) {
+        let cursor = grid.firstChild;
+
+        entities.forEach(entity => {
+            const options = optionsFor(entity);
+            let entry = cache.get(entity);
+
+            if (!entry) {
+                entry = { el: createElement(entity), signature: '', onClick: null };
+                entry.el.addEventListener('click', () => {
+                    if (entry.onClick) {
+                        entry.onClick(entity);
+                    }
+                });
+                cache.set(entity, entry);
+            }
+
+            const signature = contextSignature + '|' + (options.selected ? 1 : 0);
+
+            if (entry.signature !== signature) {
+                updateElement(entry.el, entity, options);
+                entry.signature = signature;
+            }
+
+            entry.onClick = options.selectable && typeof options.onClick === 'function' ?
+                options.onClick :
+                null;
+            entry.el.disabled = !options.selectable;
+
+            if (entry.el === cursor) {
+                cursor = cursor.nextSibling;
+            } else {
+                grid.insertBefore(entry.el, cursor);
+            }
+        });
+
+        while (cursor) {
+            const next = cursor.nextSibling;
+            grid.removeChild(cursor);
+            cursor = next;
+        }
+    };
+}

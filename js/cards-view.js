@@ -258,16 +258,12 @@ function getCardStats(card, itemTypeId = 0, upgradeLevel = 0, stateReason = '') 
     return stats;
 }
 
-function createCardCard(card, options = {}) {
+function createCardElement(card) {
     const template = document.getElementById('item-card-template');
     const cardEl = template.content.firstElementChild.cloneNode(true);
 
     const icon = cardEl.querySelector('.item-icon');
     const fallback = cardEl.querySelector('.item-icon-fallback');
-    const name = cardEl.querySelector('.item-name');
-    const type = cardEl.querySelector('.item-type');
-    const statsList = cardEl.querySelector('.item-stats');
-    const footer = cardEl.querySelector('.item-footer');
 
     icon.addEventListener('error', () => {
         icon.hidden = true;
@@ -277,22 +273,14 @@ function createCardCard(card, options = {}) {
     icon.src = card.icon_path;
     icon.alt = card.name;
 
-    name.textContent = card.name;
+    cardEl.querySelector('.item-name').textContent = card.name;
+    cardEl.querySelector('.item-type').textContent = card.card_type_name || '';
+    cardEl.querySelector('.item-footer')?.remove();
 
-    let typeText = card.card_type_name || '';
+    return cardEl;
+}
 
-    if (card.card_type_socket_number !== null && card.card_type_socket_number !== undefined) {
-        //typeText += ' · Слот ' + card.card_type_socket_number;
-    }
-
-    if (options.lockedBadge) {
-        //typeText += ' · принудительная';
-    }
-
-    type.textContent = typeText;
-
-    footer?.remove();
-
+function updateCardElement(cardEl, card, options) {
     const hostItemActive = options.hostItemActive !== false;
     const hostItemStateId = options.hostItemStateId ?? null;
 
@@ -313,24 +301,32 @@ function createCardCard(card, options = {}) {
         stateReason
     );
 
-    renderStatsList(statsList, stats);
+    renderStatsList(cardEl.querySelector('.item-stats'), stats);
 
-    if (options.selected) {
-        cardEl.classList.add('selected');
-    }
+    cardEl.classList.toggle('selected', Boolean(options.selected));
+    cardEl.classList.toggle('item-inactive', !hostItemActive || !isCardStateActive(card));
+}
 
-    if (!hostItemActive || !isCardStateActive(card)) {
-        cardEl.classList.add('item-inactive');
-    }
+const syncCardGrid = createCardGridCache(createCardElement, updateCardElement);
+let cardsGridEl = null;
 
-    if (options.selectable && typeof options.onClick === 'function') {
-        cardEl.disabled = false;
-        cardEl.addEventListener('click', () => options.onClick(card));
-    } else {
-        cardEl.disabled = true;
-    }
-
-    return cardEl;
+// Всё, что влияет на содержимое карточки карты, кроме самой карты и selected.
+function getCardGridContextSignature(options) {
+    return [
+        currentStateId,
+        getSelectedClassId(),
+        Array.from(enabledFeatureCheckboxIds).sort().join(','),
+        Array.from(getKnownEquippedCardIds()).sort((a, b) => a - b).join(','),
+        mapSignature(CALC_STATE.totals),
+        mapSignature(getEquippedItemTypeCounts()),
+        Array.from(CALC_STATE.sets.values())
+            .map(state => state.set_id + ':' + state.main_count + ':' + state.ordinary_count)
+            .join(','),
+        Number(options.itemTypeId || 0),
+        Number(options.upgradeLevel || 0),
+        options.hostItemActive !== false ? 1 : 0,
+        options.hostItemStateId ?? '',
+    ].join('|');
 }
 
 function appendCardGrid(container, cards, options = {}) {
@@ -338,27 +334,21 @@ function appendCardGrid(container, cards, options = {}) {
         return;
     }
 
-    const grid = document.createElement('div');
-    grid.className = 'item-grid';
+    if (!cardsGridEl) {
+        cardsGridEl = document.createElement('div');
+        cardsGridEl.className = 'item-grid';
+    }
 
     const selectedId = options.selectedId !== undefined && options.selectedId !== null ?
         Number(options.selectedId) :
         null;
 
-    cards.forEach(card => {
-        const cardOptions = {
-            ...options
-        };
-        delete cardOptions.selectedId;
+    syncCardGrid(cardsGridEl, cards, getCardGridContextSignature(options), card => ({
+        ...options,
+        selected: selectedId !== null && Number(card.id) === selectedId,
+    }));
 
-        if (selectedId !== null && Number(card.id) === selectedId) {
-            cardOptions.selected = true;
-        }
-
-        grid.appendChild(createCardCard(card, cardOptions));
-    });
-
-    container.appendChild(grid);
+    container.appendChild(cardsGridEl);
 }
 
 function renderCardsTabInner() {
@@ -683,4 +673,3 @@ const cardsViewConfig = {
 async function refreshCardsView(force = false) {
     return refreshEntityView(cardsViewConfig, force);
 }
-
