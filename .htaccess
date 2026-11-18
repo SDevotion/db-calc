@@ -1,6 +1,24 @@
-<FilesMatch "\.(sql|md|log)$">
+<FilesMatch "\.(sql|md|log|json|tmp)$">
   Require all denied
 </FilesMatch>
 <Files "config.local.php">
   Require all denied
 </Files>
+
+# Сжатие текстовых ответов: JSON API, HTML, CSS, JS, SVG.
+# mod_deflate сам снимает Content-Length и дописывает -gzip к ETag —
+# api_output_json() это уже учитывает.
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE application/json text/html text/css text/plain application/javascript text/javascript image/svg+xml
+</IfModule>
+
+# Кэш статики: иконки меняются редко; js/css пока без версий (?v=) —
+# короткий max-age, чтобы правки подхватывались в течение часа.
+<IfModule mod_headers.c>
+  <FilesMatch "\.(ico|png|jpe?g|gif|svg|webp)$">
+    Header set Cache-Control "public, max-age=604800"
+  </FilesMatch>
+  <FilesMatch "\.(css|js)$">
+    Header set Cache-Control "public, max-age=3600"
+  </FilesMatch>
+</IfModule>
