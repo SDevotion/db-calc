@@ -407,6 +407,28 @@ function getClassNamesByIds(classIds) {
         .join(', ');
 }
 
+// Кэш предков выбранного класса: ключ — значение селекта.
+// Пересчитывается только при смене класса; справочник классов
+// загружается один раз при старте (bootstrap).
+let selectedClassCache = { key: null, classId: 0, ancestors: new Set() };
+
+function getSelectedClassAncestors() {
+    const key = classSelect.value;
+
+    if (selectedClassCache.key !== key) {
+        const info = INFO[key];
+        const classId = Number(info && info.id ? info.id : 0);
+
+        selectedClassCache = {
+            key,
+            classId,
+            ancestors: classId ? getClassAncestorIds(classId) : new Set(),
+        };
+    }
+
+    return selectedClassCache;
+}
+
 function isClassRestrictionActive(classIds) {
     const restrictedIds = normalizeIdList(classIds);
 
@@ -414,15 +436,13 @@ function isClassRestrictionActive(classIds) {
         return true;
     }
 
-    const selectedClassId = getSelectedClassId();
+    const selected = getSelectedClassAncestors();
 
-    if (!selectedClassId) {
+    if (!selected.classId) {
         return false;
     }
 
-    const selectedAncestors = getClassAncestorIds(selectedClassId);
-
-    return restrictedIds.some(id => selectedAncestors.has(Number(id)));
+    return restrictedIds.some(id => selected.ancestors.has(Number(id)));
 }
 
 function getItemTypeName(id) {
