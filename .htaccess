@@ -1,9 +1,32 @@
-<FilesMatch "\.(sql|md|log|json|tmp)$">
+# Запрет листинга каталогов (нужен AllowOverride Options).
+Options -Indexes
+
+# Служебные файлы, дампы и бэкапы не отдаём веб-сервером.
+<FilesMatch "\.(sql|md|log|json|tmp|lock|bak|swp|orig|save|old|dist|ini|sh|env)$">
   Require all denied
 </FilesMatch>
 <Files "config.local.php">
   Require all denied
 </Files>
+
+# Скрытые файлы и каталоги (.git, .env, .htaccess и т.п.).
+<FilesMatch "^\.">
+  Require all denied
+</FilesMatch>
+RedirectMatch 404 /\.git
+
+# Security-заголовки публичной части (админка дополнительно шлёт свои из PHP).
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "DENY"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set Permissions-Policy "geolocation=(), microphone=(), camera=()"
+  Header always set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+  # HSTS включаем только на HTTPS-соединении.
+  <If "%{HTTPS} == 'on'">
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+  </If>
+</IfModule>
 
 # Сжатие текстовых ответов: JSON API, HTML, CSS, JS, SVG.
 # mod_deflate сам снимает Content-Length и дописывает -gzip к ETag —

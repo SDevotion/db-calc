@@ -774,7 +774,8 @@ try {
         }
     }
 $pdo = connect();
-$run = static function (string $action) use ($pdo): array {
+$cacheWorthy = true;
+$run = static function (string $action) use ($pdo, &$cacheWorthy): array {
 $result = null;
 switch ($action) {
         case 'classes':
@@ -819,7 +820,11 @@ $st->execute($params);
 $result = get_stamp_variants_by_ids($pdo, $st->fetchAll(PDO::FETCH_COLUMN));
 break;
 case 'stamps_by_ids':
-$result = get_stamp_variants_by_ids($pdo, normalize_id_list($_GET['ids'] ?? ''));
+$ids = normalize_id_list($_GET['ids'] ?? '');
+$result = get_stamp_variants_by_ids($pdo, $ids);
+if (count($result) !== count($ids)) {
+    $cacheWorthy = false;
+}
 break;
 case 'item_stamps':
 $itemId = (int)($_GET['item_id'] ?? 0);
@@ -853,6 +858,12 @@ $ph = in_placeholders($itemIds);
 $st = $pdo->prepare("SELECT item_id, stamp_variant_id, is_locked FROM item_stamps WHERE item_id IN ($ph)");
 $st->execute($itemIds);
 $rows = $st->fetchAll();
+// Кэшируем, только если все запрошенные предметы реально существуют.
+$existSt = $pdo->prepare("SELECT id FROM items WHERE id IN ($ph)");
+$existSt->execute($itemIds);
+if (count($existSt->fetchAll(PDO::FETCH_COLUMN)) !== count($itemIds)) {
+    $cacheWorthy = false;
+}
 $variants = get_stamp_variants_by_ids($pdo, array_map(static fn($r) => (int)$r['stamp_variant_id'], $rows));
 $byId = [];
 foreach ($variants as $variant) {
@@ -1157,6 +1168,9 @@ AND (i.gender = 'any' OR i.gender = ?)
         case 'cards_by_ids':
             $ids = normalize_id_list($_GET['ids'] ?? '');
             $result = get_cards_by_ids($pdo, $ids);
+            if (count($result) !== count($ids)) {
+                $cacheWorthy = false;
+            }
             break;
 
         case 'item_cards':
@@ -1283,6 +1297,9 @@ AND (i.gender = 'any' OR i.gender = ?)
             foreach ($countStmt->fetchAll() as $itemRow) {
                 $socketCounts[(int)$itemRow['id']] = (int)$itemRow['sockets'];
             }
+            if (count($socketCounts) !== count($itemIds)) {
+                $cacheWorthy = false;
+            }
 
             $response = [];
             foreach ($itemIds as $itemId) {
@@ -1361,6 +1378,9 @@ WHERE i.id IN ($placeholders)
             $items = $stmt->fetchAll();
 
             $result = build_items_payload($pdo, $items);
+            if (count($items) !== count($ids)) {
+                $cacheWorthy = false;
+            }
             break;
 
         case 'items':
@@ -1627,7 +1647,7 @@ if ($action === 'bootstrap') {
     $result = $run($action);
 }
 $json = json_encode($result, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR);
-if ($cacheKey !== null) {
+if ($cacheKey !== null && $cacheWorthy && $result) {
     api_cache_set($cacheKey, $json);
 }
 api_output_json($json, in_array($action, api_cacheable_actions(), true));

@@ -39,7 +39,6 @@ function admin_credentials(): array
 {
     return [
         'user' => cfg('ADMIN_USER', 'admin'),
-        'pass' => cfg('ADMIN_PASS', ''),
         'hash' => cfg('ADMIN_PASS_HASH', ''),
     ];
 }
@@ -294,16 +293,36 @@ function slot_payload(): array
 }
 
 /* ---------- Файловый кэш JSON-ответов API ---------- */
+/*
+ * Кэш лежит ВНЕ webroot (по умолчанию — соседний с корнем сайта каталог
+ * db-calc-cache/api). Переопределяется через API_CACHE_DIR в config.local.php.
+ * Если каталог недоступен для записи, кэш молча отключается — API работает.
+ */
 
 function api_cache_dir(): string
 {
-    return __DIR__ . '/cache/api';
+    return cfg('API_CACHE_DIR', dirname(__DIR__) . '/db-calc-cache/api');
+}
+
+function api_cache_ttl(): int
+{
+    return 300;
+}
+
+function api_cache_max_files(): int
+{
+    return 500;
+}
+
+function api_cache_max_bytes(): int
+{
+    return 64 * 1024 * 1024;
 }
 
 function api_cache_get(string $key): ?string
 {
     $file = api_cache_dir() . '/' . $key . '.json';
-    if (!is_file($file) || time() - (int)filemtime($file) > 300) {
+    if (!is_file($file) || time() - (int)filemtime($file) > api_cache_ttl()) {
         return null;
     }
     $json = @file_get_contents($file);
@@ -312,6 +331,11 @@ function api_cache_get(string $key): ?string
 
 function api_cache_set(string $key, string $json): void
 {
+    // Пустые ответы не кэшируем: иначе анонимный флуд произвольными
+    // параметрами/ID плодит файлы-пустышки и забивает диск.
+    if ($json === '' || $json === '[]' || $json === '{}' || $json === 'null') {
+        return;
+    }
     $dir = api_cache_dir();
     if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
         return;
@@ -320,6 +344,55 @@ function api_cache_set(string $key, string $json): void
     $tmp = $file . '.' . getmypid() . '.tmp';
     if (@file_put_contents($tmp, $json, LOCK_EX) !== false) {
         @rename($tmp, $file);
+    }
+    // Вероятностный GC — не на каждой записи, чтобы не тормозить ответ.
+    if (random_int(1, 50) === 1) {
+        api_cache_gc($dir);
+    }
+}
+
+function api_cache_gc(string $dir): void
+{
+    $now = time();
+    $ttl = api_cache_ttl();
+    $entries = [];
+    $total = 0;
+
+    foreach (glob($dir . '/*.json') ?: [] as $file) {
+        $mtime = (int)@filemtime($file);
+        if ($now - $mtime > $ttl) {
+            @unlink($file);
+            continue;
+        }
+        $size = (int)@filesize($file);
+        $entries[] = ['file' => $file, 'mtime' => $mtime, 'size' => $size];
+        $total += $size;
+    }
+
+    // Осиротевшие .tmp от прерванных записей.
+    foreach (glob($dir . '/*.tmp') ?: [] as $tmp) {
+        if ($now - (int)@filemtime($tmp) > $ttl) {
+            @unlink($tmp);
+        }
+    }
+
+    $maxFiles = api_cache_max_files();
+    $maxBytes = api_cache_max_bytes();
+    $count = count($entries);
+    if ($count <= $maxFiles && $total <= $maxBytes) {
+        return;
+    }
+
+    // Превышен лимит — удаляем самые старые, пока не влезем в оба лимита.
+    usort($entries, static fn(array $a, array $b): int => $a['mtime'] <=> $b['mtime']);
+    foreach ($entries as $entry) {
+        if ($count <= $maxFiles && $total <= $maxBytes) {
+            break;
+        }
+        if (@unlink($entry['file'])) {
+            $count--;
+            $total -= $entry['size'];
+        }
     }
 }
 
