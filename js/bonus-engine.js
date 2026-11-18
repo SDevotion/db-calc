@@ -143,34 +143,43 @@ function getSetNegativeMode(setId, setStates = null) {
     return mode;
 }
 
+// В calc-режиме тексты причин не нужны — общие пустые массивы вместо аллокаций.
+const EMPTY_REASON_LIST = Object.freeze([]);
+
 function resolveBonus(bonus, context, options = {}) {
     const mode = options.mode === 'calc' ? 'calc' : 'ui';
+    const isCalc = mode === 'calc';
 
-    const reasons = [];
-    const reasonCodes = [];
-    const hints = [];
+    const reasons = isCalc ? EMPTY_REASON_LIST : [];
+    const reasonCodes = isCalc ? EMPTY_REASON_LIST : [];
+    const hints = isCalc ? EMPTY_REASON_LIST : [];
 
     let active = true;
     let neutralized = false;
 
     const addReasonCode = code => {
-        if (code && !reasonCodes.includes(code)) {
+        if (!isCalc && code && !reasonCodes.includes(code)) {
             reasonCodes.push(code);
         }
     };
 
-    const fail = (code, uiMessage = '') => {
+    // uiMessage — строка или thunk: в calc-режиме текст не строится вовсе.
+    const fail = (code, uiMessage = null) => {
         active = false;
         addReasonCode(code);
 
-        if (mode === 'ui' && uiMessage) {
-            addHiddenReason(reasons, uiMessage);
+        if (!isCalc && uiMessage) {
+            addHiddenReason(reasons, typeof uiMessage === 'function' ? uiMessage() : uiMessage);
         }
     };
 
     const addHint = message => {
-        if (message && !hints.includes(message)) {
-            hints.push(message);
+        if (isCalc || !message) {
+            return;
+        }
+        const text = typeof message === 'function' ? message() : message;
+        if (text && !hints.includes(text)) {
+            hints.push(text);
         }
     };
 
@@ -191,7 +200,7 @@ function resolveBonus(bonus, context, options = {}) {
         if (!context.setHasMain || ordinary < required) {
             fail(
                 'set_count',
-                reasonSetCount(required)
+                () => reasonSetCount(required)
             );
         }
     }
@@ -199,14 +208,14 @@ function resolveBonus(bonus, context, options = {}) {
     if (!isEntityStateActive(bonus.state_id)) {
         fail(
             'state',
-            reasonState(getStateNameById(bonus.state_id))
+            () => reasonState(getStateNameById(bonus.state_id))
         );
     }
 
     if (!isFeatureVisibleForTab(bonus.feature_id, tab)) {
         fail(
             'feature',
-            reasonFeature(getFeatureDisplayName(bonus.feature_id))
+            () => reasonFeature(getFeatureDisplayName(bonus.feature_id))
         );
     }
 
@@ -220,7 +229,7 @@ function resolveBonus(bonus, context, options = {}) {
         if (!knownCardIds.has(depId)) {
             fail(
                 'depends_on_card',
-                reasonCard(getCardName(depId))
+                () => reasonCard(getCardName(depId))
             );
         }
     }
@@ -230,7 +239,7 @@ function resolveBonus(bonus, context, options = {}) {
     if (bonusClassIds.length && !isClassRestrictionActive(bonusClassIds)) {
         fail(
             'class',
-            reasonClassRestrictionByNames(getClassNamesByIds(bonusClassIds))
+            () => reasonClassRestrictionByNames(getClassNamesByIds(bonusClassIds))
         );
     }
 
@@ -244,7 +253,7 @@ function resolveBonus(bonus, context, options = {}) {
         if (!allowedTypeIds.includes(Number(context.itemTypeId || 0))) {
             fail(
                 'item_type_restriction',
-                reasonItemTypeRestrictionByNames(
+                () => reasonItemTypeRestrictionByNames(
                     bonus.item_type_restrictions.map(getItemTypeName)
                 )
             );
@@ -273,7 +282,7 @@ function resolveBonus(bonus, context, options = {}) {
         if (!conditionsActive) {
             fail(
                 'item_type_conditions',
-                reason('itemTypeConditions', {
+                () => reason('itemTypeConditions', {
                     conditions: getItemTypeConditionText(
                         bonus.item_type_conditions,
                         conditionMode
@@ -309,7 +318,7 @@ function resolveBonus(bonus, context, options = {}) {
         value = value * factor;
 
         if (factor <= 0) {
-            fail('upgrade', buildUpgradeReason(bonus));
+            fail('upgrade', () => buildUpgradeReason(bonus));
         }
     } else if (scalingType === 'per_level_above') {
         const step = Math.max(1, Number(bonus.scaling_step || 1));
@@ -318,7 +327,7 @@ function resolveBonus(bonus, context, options = {}) {
         value = value * factor;
 
         if (factor <= 0) {
-            fail('upgrade', buildUpgradeReason(bonus));
+            fail('upgrade', () => buildUpgradeReason(bonus));
         }
     } else if (scalingType === 'once_above') {
         const threshold = Math.max(0, Number(bonus.scaling_threshold || 0));
@@ -326,7 +335,7 @@ function resolveBonus(bonus, context, options = {}) {
         value = value * factor;
 
         if (factor <= 0) {
-            fail('upgrade', buildUpgradeReason(bonus));
+            fail('upgrade', () => buildUpgradeReason(bonus));
         }
     } else if (scalingType === 'multiply_by_identical_cards') {
         const required = Math.max(1, Number(bonus.scaling_required_count || 1));
@@ -344,7 +353,7 @@ function resolveBonus(bonus, context, options = {}) {
             factor = multiplier;
         } else {
             factor = 1;
-            addHint(reasonMultiplyIdenticalCards(bonus));
+            addHint(() => reasonMultiplyIdenticalCards(bonus));
         }
     } else if (scalingType === 'per_stat') {
         const totals = options.totals instanceof Map ?
@@ -356,7 +365,7 @@ function resolveBonus(bonus, context, options = {}) {
         if (!totals) {
             value = 0;
             factor = 0;
-            fail('stat', buildStatDependencyReason(bonus));
+            fail('stat', () => buildStatDependencyReason(bonus));
         } else {
             const sources = Array.isArray(bonus.stat_sources) && bonus.stat_sources.length ?
                 bonus.stat_sources :
@@ -370,7 +379,7 @@ function resolveBonus(bonus, context, options = {}) {
             if (!sources.length) {
                 value = 0;
                 factor = 0;
-                fail('stat', buildStatDependencyReason(bonus));
+                fail('stat', () => buildStatDependencyReason(bonus));
             } else {
                 const factors = sources.map(source => {
                     const sourceId = Number(source.stat_id || 0);
@@ -393,7 +402,7 @@ function resolveBonus(bonus, context, options = {}) {
                 value = value * factor;
 
                 if (factor <= 0) {
-                    fail('stat', buildStatDependencyReason(bonus));
+                    fail('stat', () => buildStatDependencyReason(bonus));
                 }
             }
         }
@@ -412,7 +421,7 @@ function resolveBonus(bonus, context, options = {}) {
         if (!totals) {
             value = baseThresholdValue;
             factor = 1;
-            addHint(buildStatDependencyReason(bonus));
+            addHint(() => buildStatDependencyReason(bonus));
         } else {
             const sourceTotal = Math.round(Math.max(0, Number(totals.get(sourceId) || 0)) * 1e6) / 1e6;
 
@@ -422,7 +431,7 @@ function resolveBonus(bonus, context, options = {}) {
             } else {
                 value = baseThresholdValue;
                 factor = 1;
-                addHint(buildStatDependencyReason(bonus));
+                addHint(() => buildStatDependencyReason(bonus));
             }
         }
     }
