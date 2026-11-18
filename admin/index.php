@@ -81,7 +81,7 @@ function render_login(string $error): void
 <form method="post" action="<?= e(admin_url('login')) ?>" class="login-card">
 <div class="admin-brand">Kamikaze Calc</div>
 <?php if (!auth_configured()): ?>
-<div class="flash error">Не заданы <b>ADMIN_USER</b> и <b>ADMIN_PASS</b> в <code>config.local.php</code>. Вход невозможен, пока параметры не заполнены.</div>
+<div class="flash error">Не заданы <b>ADMIN_USER</b> и <b>ADMIN_PASS_HASH</b> в <code>config.local.php</code>. Сгенерируйте хэш командой <code>php -r "echo password_hash('ваш-пароль', PASSWORD_DEFAULT);"</code> и сохраните результат в <b>ADMIN_PASS_HASH</b>. Вход невозможен, пока параметры не заполнены.</div>
 <?php endif; ?>
 <?php if ($error !== ''): ?>
 <div class="flash error"><?= e($error) ?></div>
@@ -97,7 +97,7 @@ function render_login(string $error): void
 <input type="password" id="pass" name="pass" required autocomplete="current-password">
 </div>
 <button type="submit" class="btn btn-primary"<?= auth_configured() ? '' : ' disabled' ?>>Войти в панель</button>
-<p class="muted" style="margin:0">После пяти неудачных попыток вход блокируется на минуту.</p>
+<p class="muted" style="margin:0">После 10 неудачных попыток вход с вашего IP блокируется на 15 минут.</p>
 </form>
 </div>
 </body>
@@ -121,25 +121,20 @@ if ($action === 'login') {
     $error = '';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         verify_csrf();
-        $now  = time();
-        $lock = (int)($_SESSION['login_lock_until'] ?? 0);
+        $ip   = auth_client_ip();
+        $lock = auth_throttle_lock_remaining($ip);
         $user = trim((string)($_POST['user'] ?? ''));
-        if ($lock > $now) {
-            $error = 'Слишком много попыток. Подождите ' . ($lock - $now) . ' с.';
+        if ($lock > 0) {
+            $error = 'Слишком много попыток входа с этого адреса. Подождите ' . $lock . ' с.';
         } elseif (auth_attempt($user, (string)($_POST['pass'] ?? ''))) {
+            auth_throttle_reset($ip);
             session_regenerate_id(true);
             $_SESSION['admin_user'] = $user;
-            $_SESSION['login_attempts'] = 0;
-            unset($_SESSION['login_lock_until']);
+            unset($_SESSION['login_attempts'], $_SESSION['login_lock_until']);
             flash('success', 'Добро пожаловать, ' . $user . '.');
             redirect(admin_url('dashboard'));
         } else {
-            $n = (int)($_SESSION['login_attempts'] ?? 0) + 1;
-            $_SESSION['login_attempts'] = $n;
-            if ($n >= 5) {
-                $_SESSION['login_lock_until'] = $now + 60;
-                $_SESSION['login_attempts'] = 0;
-            }
+            auth_throttle_register_failure($ip);
             usleep(400000);
             $error = 'Неверный логин или пароль.';
         }

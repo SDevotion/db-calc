@@ -170,7 +170,7 @@ function auth_check(): bool { return !empty($_SESSION['admin_user']); }
 function auth_configured(): bool
 {
     $c = admin_credentials();
-    return $c['hash'] !== '' || $c['pass'] !== '';
+    return $c['hash'] !== '';
 }
 
 function auth_attempt(string $user, string $pass): bool
@@ -178,15 +178,91 @@ function auth_attempt(string $user, string $pass): bool
     $c = admin_credentials();
     if (!auth_configured()) return false;
     $userOk = hash_equals($c['user'], $user);
-    $passOk = $c['hash'] !== ''
-        ? password_verify($pass, $c['hash'])
-        : hash_equals($c['pass'], $pass);
-    return $userOk && $passOk;
+    return $userOk && password_verify($pass, $c['hash']);
 }
 
 function require_auth(): void
 {
     if (!auth_check()) redirect(admin_url('login'));
+}
+
+/* ---------- Троттлинг входа по IP ---------- */
+/*
+ * Счётчик попыток хранится в файле вне webroot (db-calc-cache/auth),
+ * а не в сессии: сброс cookie больше не обнуляет блокировку.
+ * REMOTE_ADDR намеренно не подменяется на X-Forwarded-For — заголовок
+ * подделывается; за reverse-proxy настройте реальный IP на уровне сервера.
+ */
+
+function auth_client_ip(): string
+{
+    return (string)($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
+}
+
+function auth_throttle_dir(): string
+{
+    return cfg('AUTH_THROTTLE_DIR', dirname(__DIR__, 2) . '/db-calc-cache/auth');
+}
+
+function auth_throttle_state(string $ip, ?callable $mutate = null): array
+{
+    $default = ['attempts' => 0, 'lock_until' => 0, 'updated' => 0];
+    $dir = auth_throttle_dir();
+    if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
+        error_log('[auth] throttle dir unavailable: ' . $dir);
+        return $default;
+    }
+    $file = $dir . '/' . md5($ip) . '.json';
+    $fh = @fopen($file, $mutate === null ? 'r' : 'c+');
+    if ($fh === false) {
+        return $default;
+    }
+    $state = $default;
+    if (flock($fh, LOCK_EX)) {
+        $data = json_decode((string)stream_get_contents($fh), true);
+        if (is_array($data)) {
+            $state = array_merge($default, $data);
+        }
+        if ($mutate !== null) {
+            $state = $mutate($state);
+            ftruncate($fh, 0);
+            rewind($fh);
+            fwrite($fh, json_encode($state));
+            fflush($fh);
+        }
+        flock($fh, LOCK_UN);
+    }
+    fclose($fh);
+    return $state;
+}
+
+function auth_throttle_lock_remaining(string $ip): int
+{
+    $state = auth_throttle_state($ip);
+    return max(0, (int)$state['lock_until'] - time());
+}
+
+function auth_throttle_register_failure(string $ip): void
+{
+    $now = time();
+    auth_throttle_state($ip, static function (array $s) use ($now): array {
+        // Окно учёта — 15 минут; после 10 неудач — блок на 15 минут.
+        if ($now - (int)$s['updated'] > 900) {
+            $s['attempts'] = 0;
+        }
+        $s['attempts'] = (int)$s['attempts'] + 1;
+        $s['updated'] = $now;
+        if ($s['attempts'] >= 10) {
+            $s['lock_until'] = $now + 900;
+            $s['attempts'] = 0;
+        }
+        return $s;
+    });
+}
+
+function auth_throttle_reset(string $ip): void
+{
+    @unlink(auth_throttle_dir() . '/' . md5($ip) . '.json');
 }
 
 /* ---------- Справочные опции ---------- */
